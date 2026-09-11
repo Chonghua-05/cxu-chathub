@@ -1,0 +1,12 @@
+config.json
+state.json
+data/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+*.key
+*.pem
+secrets.*

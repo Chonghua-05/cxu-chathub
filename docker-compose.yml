@@ -1,0 +1,28 @@
+services:
+  chatroom-bridge:
+    build:
+      context: .
+      args:
+        # /status 发图需要 Chromium；磁盘/内存不足时改成 "false"（渲染会自动回退文本）
+        STATUS_IMAGE: "true"
+    image: cxu-chathub:latest
+    container_name: chatroom-bridge
+    restart: unless-stopped
+    # 复用旧框架原来占用的 6199：NapCat 客户端本来就指向 127.0.0.1:6199/ws，
+    # 所以 NapCat 侧无需新增客户端，也不需要额外放行任何端口。
+    # 注意：6199 当前被旧框架容器占用，必须先停掉旧框架才能起本容器。
+    ports:
+      - "127.0.0.1:6199:6199"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data:/data
+    # Chromium 渲染状态图需要的内存；容器自身常驻只有 ~40MB
+    mem_limit: 1200m
+    shm_size: 512m
+    environment:
+      - TZ=Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

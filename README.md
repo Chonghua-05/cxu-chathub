@@ -105,7 +105,7 @@ NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `d
 | `services/player_tracker.rs` | 玩家快照差分 + 防抖 + 事件重试 |
 | `services/commands.rs` / `status_render.rs` | `/chatroom` `/server` 命令与状态图（Chromium 渲染由 `status-image` feature 门控，自动回退文本） |
 | `router/` | **统一消息路由**：三端入站汇入 `CommandRouter`，`/命令`、`!q`、`!snap` 均为注册其上的 `CommandHandler` |
-| `agent/` | **agent 能力预留层**：`DocumentSource` trait + 设计文档，本阶段不实现技能 |
+| `agent/` | **agent 能力（已实现）**：命令与文档源全部由 `agent.skills` 配置注册——`LocalDocSource`（本地目录，文件:行号出处）+ `MediaWikiSource`（云端 api.php）+ 通用 `DocQuerySkill`（LLM 整理、失败自动降级摘录）；设计见 [`docs/agent-design.md`](docs/agent-design.md) |
 | `api/` | **独立 HTTP API**（默认 `127.0.0.1:8199`）：状态/近期消息读接口 + token 保护的 `/api/relay` 写接口，带 CORS——Web UI 与其他站点调用的入口（见 [`docs/api-design.md`](docs/api-design.md)） |
 | `service.rs` / `main.rs` | 服务装配与生命周期（`--config`） |
 

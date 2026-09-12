@@ -63,6 +63,20 @@
 | `listen_port` | int | `8199` | API 端口 |
 | `access_token` | str | `""` | 写接口（`POST /api/relay`）必需；为空时写接口一律 403。端点与鉴权见 [`api-design.md`](api-design.md) |
 
+## `agent` —— 检索问答技能（Rust 版）
+
+命令与文档源**全部由配置注册**，新增命令不需要改代码（见 [`agent-design.md`](agent-design.md)）。
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `enabled` | bool | `false` | agent 技能总开关 |
+| `llm` | object / null | `null` | OpenAI 兼容 `/chat/completions`：`api_url` / `api_key` / `model` / `timeout_secs`(30) / `max_answer_chars`(1000) / `system_prompt`。未配置或调用失败时自动降级为纯检索摘录 |
+| `skills[]` | list | `[]` | 命令声明：`name`（如 "mc"）、`trigger`（默认 `!{name}`）、`description`、`max_results`(5)、`sources[]` |
+| `skills[].sources[]` | list | 必填 | `{"type": "local", "root": 目录, "extensions": [".java"], "name": 来源名}` 或 `{"type": "mediawiki", "api_url": ".../api.php", "name": 来源名}`；可多个，结果合并并标注来源 |
+
+示例：`!mc` 接本地 MC 源码副本、`!wiki` 接 zh.minecraft.wiki、`!tmc` 同时接本地 techmc 文档与
+云端站点——见 `config.example.json` 的 `agent` 段。
+
 ## 顶层
 
 | 字段 | 类型 | 默认 | 说明 |

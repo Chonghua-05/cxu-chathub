@@ -25,7 +25,9 @@ use crate::adapters::onebot::{
 use crate::api::ApiServer;
 use crate::config::AppConfig;
 use crate::router::handlers::{QqForwardRelay, SlashCommandAdapter, SnapshotRelay};
-use crate::router::{CommandInfo, CommandRouter, DispatchCtx, Hub, InboundMessage, ReplySink, Source};
+use crate::router::{
+    CommandHandler, CommandInfo, CommandRouter, DispatchCtx, Hub, InboundMessage, ReplySink, Source,
+};
 use crate::services::commands::CommandService;
 use crate::services::forwarder::{ChatroomForwarder, ForwarderStats, ImageResolver};
 use crate::services::player_tracker::{OnEvent, PlayerTracker, TrackerStats};
@@ -256,6 +258,21 @@ impl BridgeService {
             sender: cfg.chatroom.snapshot_sender.clone(),
             prefix: cfg.chatroom.snapshot_prefix.clone(),
         }));
+
+        // agent 技能：全部由配置声明（见 docs/agent-design.md），trigger 长者先注册
+        // 避免前缀遮蔽（如 !tmc 先于 !tm）
+        let mut agent_skills = crate::agent::build_skills(&cfg.agent);
+        agent_skills.sort_by(|a, b| {
+            b.info()
+                .trigger
+                .len()
+                .cmp(&a.info().trigger.len())
+        });
+        for skill in agent_skills {
+            let meta = skill.info();
+            info!("注册 agent 技能: {} ({})", meta.name, meta.trigger);
+            router.register(Arc::new(skill));
+        }
 
         let service = Arc::new_cyclic(|weak: &Weak<BridgeService>| {
             let handler: GroupMessageHandler = {
@@ -499,7 +516,7 @@ impl BridgeService {
             user_id: 0,
             display_name: username.clone(),
         };
-        let sink = ChatroomReplySink;
+        let sink = ChatroomReplySink::new(&self.forward_api, &self.game_seq);
         let ctx = DispatchCtx {
             hub: self,
             origin: &sink,
@@ -708,15 +725,45 @@ impl ReplySink for GameReplySink {
     }
 }
 
-/// 回复到 chatroom 频道。本阶段没有 handler 需要回源 chatroom；
-/// agent 阶段的「回答落库」将在这里经 Forward API 写回（见 docs/agent-design.md）。
-struct ChatroomReplySink;
+/// 回复到 chatroom 频道：经 Forward API 以 bot 身份写回
+/// （agent 技能回答 chatroom 端提问时的「落库」路径）。
+struct ChatroomReplySink {
+    api: Arc<ForwardApi>,
+    seq: Arc<AtomicU64>,
+}
+
+impl ChatroomReplySink {
+    fn new(api: &Arc<ForwardApi>, seq: &Arc<AtomicU64>) -> Self {
+        Self {
+            api: api.clone(),
+            seq: seq.clone(),
+        }
+    }
+}
 
 #[async_trait]
 impl ReplySink for ChatroomReplySink {
     async fn send_text(&self, text: &str) -> bool {
-        warn!("chatroom 端回源应答尚未启用（agent 阶段实现）: {}", truncate_chars(text, 40));
-        false
+        if !self.api.configured() {
+            warn!("chatroom 回源应答跳过：Forward API 未配置");
+            return false;
+        }
+        let millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let seq_no = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut message = PostMessage::new(PostSource::Game);
+        message.content = text.to_string();
+        message.source_message_id = format!("agent-reply-{millis}-{seq_no}");
+        // sender_username 留空：服务端以 bot 账号发布，归属由服务端映射决定
+        match self.api.post_message(&message).await {
+            Ok(_) => true,
+            Err(err) => {
+                warn!("chatroom 回源应答写入失败: {err}");
+                false
+            }
+        }
     }
 }
 

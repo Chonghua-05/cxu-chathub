@@ -21,10 +21,10 @@ pub struct SlashCommandAdapter {
 impl CommandHandler for SlashCommandAdapter {
     fn info(&self) -> CommandInfo {
         CommandInfo {
-            name: "chatroom",
-            aliases: &["server", "status"],
-            trigger: "/<name>",
-            description: "查询语音频道在线名单与服务器状态（/server 支持状态图，QQ 群）",
+            name: "chatroom".into(),
+            aliases: vec!["server".into(), "status".into()],
+            trigger: "/<name>".into(),
+            description: "查询语音频道在线名单与服务器状态（/server 支持状态图，QQ 群）".into(),
         }
     }
 
@@ -64,10 +64,10 @@ pub struct QqForwardRelay {
 impl CommandHandler for QqForwardRelay {
     fn info(&self) -> CommandInfo {
         CommandInfo {
-            name: "q",
-            aliases: &[],
-            trigger: "!q <内容>",
-            description: "把 chatroom / 游戏内消息转发到 QQ 群",
+            name: "q".into(),
+            aliases: vec![],
+            trigger: "!q <内容>".into(),
+            description: "把 chatroom / 游戏内消息转发到 QQ 群".into(),
         }
     }
 
@@ -112,10 +112,10 @@ pub struct SnapshotRelay {
 impl CommandHandler for SnapshotRelay {
     fn info(&self) -> CommandInfo {
         CommandInfo {
-            name: "snap",
-            aliases: &[],
-            trigger: "!snap <内容>",
-            description: "快照服更新通知转发到 QQ 群（仅指定 ChatBridge 客户端可信）",
+            name: "snap".into(),
+            aliases: vec![],
+            trigger: "!snap <内容>".into(),
+            description: "快照服更新通知转发到 QQ 群（仅指定 ChatBridge 客户端可信）".into(),
         }
     }
 

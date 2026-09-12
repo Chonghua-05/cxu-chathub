@@ -44,6 +44,38 @@
     "listen_port": 8199,
     "access_token": ""
   },
+  "agent": {
+    "enabled": false,
+    "llm": {
+      "api_url": "",
+      "api_key": "",
+      "model": "",
+      "max_answer_chars": 1000
+    },
+    "skills": [
+      {
+        "name": "mc",
+        "description": "MC 源码查询",
+        "sources": [
+          {"type": "local", "root": "/data/docs/mc-source", "name": "mc-source", "extensions": [".java", ".md"]}
+        ]
+      },
+      {
+        "name": "wiki",
+        "description": "Minecraft Wiki 查询",
+        "sources": [
+          {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php", "name": "minecraft-wiki"}
+        ]
+      },
+      {
+        "name": "tmc",
+        "description": "TechMC Wiki 查询",
+        "sources": [
+          {"type": "local", "root": "/data/docs/techmc", "name": "techmc"}
+        ]
+      }
+    ]
+  },
   "state_path": "/data/state.json",
   "log_level": "INFO"
 }

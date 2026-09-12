@@ -173,6 +173,93 @@ impl Default for ApiConfig {
     }
 }
 
+/// agent 技能的默认系统提示词（LLM 整理回答时注入）。
+pub const DEFAULT_SYSTEM_PROMPT: &str = "你是 Minecraft 游戏与社区文档助手。只依据给出的检索片段回答问题，并引用对应片段编号作为出处；片段不足以回答时明确说明查不到，禁止编造。";
+
+/// LLM 整理配置（OpenAI 兼容 /chat/completions）。`api_url` 为空 = 未配置，
+/// 技能自动降级为纯检索摘录——LLM 故障或未配置都不应导致技能不可用。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LlmConfig {
+    pub api_url: String,
+    pub api_key: String,
+    pub model: String,
+    pub timeout_secs: u64,
+    pub max_answer_chars: usize,
+    pub system_prompt: String,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            api_url: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+            timeout_secs: 30,
+            max_answer_chars: 1000,
+            system_prompt: DEFAULT_SYSTEM_PROMPT.into(),
+        }
+    }
+}
+
+/// 数据源声明：命令接什么文档由配置决定，代码只实现这两种类型。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum SourceConfig {
+    /// 本地文档 / 源码目录检索（Docker 卷挂载）
+    Local {
+        root: String,
+        /// 文件扩展名白名单（含点，如 ".java"）；空 = 内置默认集
+        #[serde(default)]
+        extensions: Vec<String>,
+        #[serde(default)]
+        name: String,
+    },
+    /// MediaWiki 站点（api.php）
+    Mediawiki {
+        api_url: String,
+        #[serde(default)]
+        name: String,
+    },
+}
+
+/// 一条命令 = 一个技能声明。新增查询命令只需在这里加一条，不改代码。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct SkillConfig {
+    /// 命令名（capabilities / 日志 / LLM 提示用）
+    pub name: String,
+    /// 触发前缀；默认 "!{name}"
+    pub trigger: String,
+    pub description: String,
+    /// 数据源列表（命中结果合并并标注来源）；全部无效时该技能不注册
+    pub sources: Vec<SourceConfig>,
+    /// 每源最大命中数
+    pub max_results: usize,
+}
+
+impl Default for SkillConfig {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            trigger: String::new(),
+            description: String::new(),
+            sources: Vec::new(),
+            max_results: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct AgentConfig {
+    pub enabled: bool,
+    /// 可选；未配置或调用失败时技能降级为纯检索摘录
+    pub llm: Option<LlmConfig>,
+    /// 命令注册表：!mc / !wiki / !tmc 以及未来任意命令都是这里的一条记录
+    pub skills: Vec<SkillConfig>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     #[serde(default, deserialize_with = "lenient")]
@@ -185,6 +272,8 @@ pub struct AppConfig {
     pub commands: CommandsConfig,
     #[serde(default, deserialize_with = "lenient")]
     pub api: ApiConfig,
+    #[serde(default, deserialize_with = "lenient")]
+    pub agent: AgentConfig,
     #[serde(default = "default_state_path")]
     pub state_path: String,
     #[serde(default = "default_log_level")]
@@ -207,6 +296,7 @@ impl Default for AppConfig {
             chatbridge: ChatBridgeConfig::default(),
             commands: CommandsConfig::default(),
             api: ApiConfig::default(),
+            agent: AgentConfig::default(),
             state_path: default_state_path(),
             log_level: default_log_level(),
         }
@@ -258,6 +348,15 @@ fn mask(token: &str) -> &'static str {
 pub fn describe(cfg: &AppConfig) -> serde_json::Value {
     let mut group_ids: Vec<i64> = cfg.group_ids().into_iter().collect();
     group_ids.sort_unstable();
+    let skill_names: Vec<String> = cfg.agent.skills.iter().map(|s| s.name.clone()).collect();
+    let llm_summary = match &cfg.agent.llm {
+        Some(llm) if !llm.api_url.is_empty() => serde_json::json!({
+            "api_url": llm.api_url,
+            "api_key": mask(&llm.api_key),
+            "model": llm.model,
+        }),
+        _ => serde_json::Value::String("(未配置)".into()),
+    };
     serde_json::json!({
         "onebot": {
             "listen": format!(
@@ -286,6 +385,11 @@ pub fn describe(cfg: &AppConfig) -> serde_json::Value {
             "enabled": cfg.api.enabled,
             "listen": format!("{}:{}", cfg.api.listen_host, cfg.api.listen_port),
             "access_token": mask(&cfg.api.access_token),
+        },
+        "agent": {
+            "enabled": cfg.agent.enabled,
+            "skills": skill_names,
+            "llm": llm_summary,
         },
         "state_path": cfg.state_path,
         "log_level": cfg.log_level,

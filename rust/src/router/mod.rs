@@ -80,16 +80,17 @@ pub struct DispatchCtx<'a> {
     pub msg: &'a InboundMessage,
 }
 
-/// handler 元数据：未来智能路由（LLM）据此在自然语言请求中选取能力。
+/// handler 元数据：`/api/status` 的 capabilities 与未来智能路由（LLM）都据此
+/// 发现能力；字段全部 owned——内置命令用静态串，配置注册的技能用动态串。
 #[derive(Debug, Clone)]
 pub struct CommandInfo {
-    /// 主名，如 "q" / "snap" / "server"；未来 "mc" / "wiki" / "tmc"
-    pub name: &'static str,
-    pub aliases: &'static [&'static str],
+    /// 主名，如 "q" / "snap" / "server"；配置注册的技能如 "mc" / "wiki" / "tmc"
+    pub name: String,
+    pub aliases: Vec<String>,
     /// 触发形态说明，如 "!<name> <query>" / "/<name>"
-    pub trigger: &'static str,
+    pub trigger: String,
     /// 能力描述（选取依据，写给路由器/人看）
-    pub description: &'static str,
+    pub description: String,
 }
 
 /// 命令处理器。返回 `true` 表示消息被消费（QQ 端语义：不再进入转发流水线）。
@@ -150,6 +151,24 @@ pub fn match_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     }
 }
 
+/// 命令触发匹配：前缀大小写不敏感，且前缀后必须是**边界**（行尾或空白），
+/// 避免 `!mc` 误吃 `!mcs` 这类更长的命令（`match_prefix` 无此约束）。
+/// 返回去掉前缀并 trim 的查询词。
+pub fn match_command<'a>(text: &'a str, trigger: &str) -> Option<&'a str> {
+    let trimmed = text.trim();
+    if trimmed.len() < trigger.len() || !trimmed.is_char_boundary(trigger.len()) {
+        return None;
+    }
+    if !trimmed[..trigger.len()].eq_ignore_ascii_case(trigger) {
+        return None;
+    }
+    let rest = &trimmed[trigger.len()..];
+    match rest.chars().next() {
+        None | Some(' ') | Some('\t') => Some(rest.trim()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,5 +181,18 @@ mod tests {
         assert_eq!(match_prefix("!qx", "!q"), Some("x"));
         assert_eq!(match_prefix("hello", "!q"), None);
         assert_eq!(match_prefix("！q x", "!q"), None);
+    }
+
+    #[test]
+    fn command_match_requires_boundary() {
+        assert_eq!(match_command("!mc 活塞", "!mc"), Some("活塞"));
+        assert_eq!(match_command("!MC", "!mc"), Some(""));
+        assert_eq!(match_command(" !tmc x", "!tmc"), Some("x"));
+        // !mc 不能吃掉 !mcs
+        assert_eq!(match_command("!mcs x", "!mc"), None);
+        assert_eq!(match_command("!mcx", "!mc"), None);
+        // !tmc 不被 !tm 或 !m 命中
+        assert_eq!(match_command("!tmc x", "!mc"), None);
+        assert_eq!(match_command("hello", "!mc"), None);
     }
 }

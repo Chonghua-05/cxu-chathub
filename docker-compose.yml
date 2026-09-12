@@ -26,3 +26,40 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # ---------- Rust 版（与上面 Python 版二选一运行）----------
+  # 两者都映射宿主机 127.0.0.1:6199，同时起会端口冲突；且 6199 双占会让同一群消息
+  # 被两边各转一次。profiles 守卫保证普通 `docker compose up` 不会把它拉起来。
+  # 切换顺序：先停旧容器（docker compose stop chatroom-bridge）→
+  #   docker compose --profile rust up -d chatroom-bridge-rust
+  # 状态文件与 Python 版互相兼容（state.json 的 forwarded / cursor / refresh_token
+  # 结构一致），./data 目录两边共用，切换后去重表与读游标不丢。
+  chatroom-bridge-rust:
+    build:
+      context: .
+      dockerfile: rust/Dockerfile
+      args:
+        # /server 状态图需要 Chromium + 中文字体（带 Chromium 镜像约 400MB；磁盘紧张可改 "false"）
+        STATUS_IMAGE: "true"
+    image: cxu-chathub:rust
+    container_name: chatroom-bridge-rust
+    restart: unless-stopped
+    # 守卫：只有显式带 --profile rust 时才启动本服务
+    profiles:
+      - "rust"
+    # 与 Python 版相同的端口语义：NapCat 客户端本就指向 127.0.0.1:6199/ws，切过来不用改 NapCat
+    ports:
+      - "127.0.0.1:6199:6199"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ./data:/data
+    # 与 Python 版相同的配额（Chromium 渲染需要）；Rust 版自身常驻更小（~10MB 级）
+    mem_limit: 1200m
+    shm_size: 512m
+    environment:
+      - TZ=Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -67,10 +67,32 @@ docker stats --no-stream chatroom-bridge
 cd /opt/cxu-chathub
 git pull
 docker compose up -d --build
+```
+
+## 6. 切换到 Rust 版（v0.2）
+
+Rust 版与 Python 版**配置与状态格式完全兼容**（`config.json` 原样可用、`state.json`
+的 forwarded / cursor / refresh_token 结构一致），NapCat 侧零改动：
+
+```bash
+docker compose stop chatroom-bridge                    # 停 Python 版（释放 6199）
+docker compose --profile rust up -d --build chatroom-bridge-rust
+curl -s http://127.0.0.1:6199/healthz                  # 期望 status=ok + onebot_connected
+docker compose logs -f --tail 50 chatroom-bridge-rust
+```
+
+- `rust/Dockerfile` 为多阶段构建；`STATUS_IMAGE=true` 变体装 Chromium + 中文字体
+  （镜像约 400MB，无 Chromium 约 80MB）。Rust 进程自身常驻约 10MB 级。
+- `./data` 卷两边共用，切回 Python 版也无需迁移数据；切换期间去重表与读游标不丢。
+- Rust 版额外监听 **HTTP API `127.0.0.1:8199`**（配置段 `api`，默认开启在回环上；
+  Python 版无此端口）。容器内已监听，compose 未映射该端口——需要给 Web UI / 其他
+  站点用时再加 `127.0.0.1:8199:8199` 映射或走反代，并先配好 `api.access_token`。
+  见 [`docs/api-design.md`](api-design.md)。
+- 验证通过后（见 `docs/roadmap.md` v0.2）再下线 Python 版服务定义。
 curl -s http://127.0.0.1:6199/healthz
 ```
 
-## 6. 故障速查
+## 7. 故障速查
 
 | 现象 | 先看什么 |
 |------|----------|
@@ -80,7 +102,7 @@ curl -s http://127.0.0.1:6199/healthz
 | 启动即退出 | `config.json` 的 JSON 语法；`docker compose logs` 里的 `ConfigError` |
 | 端口占用 | `docker ps --filter publish=6199` —— 大概率是旧框架还在跑 |
 
-## 7. 安全清单
+## 8. 安全清单
 
 - [ ] `config.json` 不在 git 工作区外泄（`.gitignore` 已覆盖，提交前 `git status` 复核）
 - [ ] 端口映射始终是 `127.0.0.1:...`

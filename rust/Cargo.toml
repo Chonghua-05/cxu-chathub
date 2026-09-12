@@ -1,0 +1,48 @@
+[package]
+name = "chatroom-bridge"
+version = "0.2.0"
+edition = "2021"
+description = "cxu-chathub 消息中枢（QQ 群 / chatroom / MC 三端互通）的 Rust 实现"
+license = "MIT"
+
+[lib]
+name = "chatroom_bridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "chatroom-bridge"
+path = "src/main.rs"
+
+[features]
+default = []
+# /server 状态图渲染（需要系统 Chromium；Docker ARG STATUS_IMAGE=true 时开启）
+status-image = ["dep:headless_chrome"]
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "io-util"] }
+axum = { version = "0.8", features = ["ws"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+aes = "0.8"
+cbc = { version = "0.2", features = ["alloc", "block-padding"] }
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+async-trait = "0.1"
+indexmap = { version = "2", features = ["serde"] }
+tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+futures-util = "0.3"
+headless_chrome = { version = "1.0", optional = true }
+
+[dev-dependencies]
+tokio-tungstenite = "0.26"
+
+[profile.release]
+strip = true
+lto = "thin"

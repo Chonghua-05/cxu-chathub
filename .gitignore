@@ -10,3 +10,9 @@ __pycache__/
 *.key
 *.pem
 secrets.*
+
+# Rust 构建产物
+rust/target/
+
+# ZCode 会话目录
+.zcode/

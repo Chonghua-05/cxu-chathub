@@ -54,6 +54,15 @@
 | `allow_from` | int[] | `[]` | 允许使用命令的群号 |
 | `status_image` | bool | `false` | `/server` 是否发图（需构建镜像时 `STATUS_IMAGE=true`） |
 
+## `api` —— HTTP API（Rust 版，Web UI / 外部站点调用）
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `enabled` | bool | `false` | 启动独立 HTTP API（与 OneBot 的 6199 隔离） |
+| `listen_host` | str | `127.0.0.1` | 默认只绑回环；对外暴露前务必先配 `access_token` |
+| `listen_port` | int | `8199` | API 端口 |
+| `access_token` | str | `""` | 写接口（`POST /api/relay`）必需；为空时写接口一律 403。端点与鉴权见 [`api-design.md`](api-design.md) |
+
 ## 顶层
 
 | 字段 | 类型 | 默认 | 说明 |

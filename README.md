@@ -88,7 +88,43 @@ Docker 部署与切流顺序见 [`docs/deployment.md`](docs/deployment.md)；
 
 ---
 
-## 模块一览
+## Rust 版（`rust/`，当前开发重心）
+
+v0.2 起本服务用 **Rust 重写**（省内存：常驻约 10MB 级 vs Python 的 40MB + Chromium），
+与 Python 版**行为逐一对齐**，`config.json` / `state.json` 格式完全兼容，切换时
+NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `docs/roadmap.md`）。
+
+| 模块 | 作用 |
+|------|------|
+| `adapters/onebot.rs` | OneBot v11 反向 WS 服务端（axum）：token 校验、echo 动作调用、事件队列 + 独立消费者、`/healthz` |
+| `adapters/forward_api.rs` | Forward Bot API 客户端（reqwest，HTTP 201 校验、上传黑名单与大小限制） |
+| `adapters/chatroom_auth.rs` | 用户 JWT 刷新与轮换持久化 |
+| `adapters/chatroom_read.rs` | 读方向轮询、读游标、`!q` 解析 |
+| `adapters/chatbridge.rs` | ChatBridge 客户端（4 字节长度前缀 + AES-CBC；与 Python 版逐字节对拍） |
+| `services/forwarder.rs` | QQ 群 → chatroom 流水线（去重 / 图片压缩 / 引用回填） |
+| `services/player_tracker.rs` | 玩家快照差分 + 防抖 + 事件重试 |
+| `services/commands.rs` / `status_render.rs` | `/chatroom` `/server` 命令与状态图（Chromium 渲染由 `status-image` feature 门控，自动回退文本） |
+| `router/` | **统一消息路由**：三端入站汇入 `CommandRouter`，`/命令`、`!q`、`!snap` 均为注册其上的 `CommandHandler` |
+| `agent/` | **agent 能力预留层**：`DocumentSource` trait + 设计文档，本阶段不实现技能 |
+| `api/` | **独立 HTTP API**（默认 `127.0.0.1:8199`）：状态/近期消息读接口 + token 保护的 `/api/relay` 写接口，带 CORS——Web UI 与其他站点调用的入口（见 [`docs/api-design.md`](docs/api-design.md)） |
+| `service.rs` / `main.rs` | 服务装配与生命周期（`--config`） |
+
+```bash
+cd rust
+cargo test                 # 122 个测试（单元 + WS 集成 + e2e 冒烟）
+cargo build --release
+./target/release/chatroom-bridge --config ./config.json
+# 状态图渲染变体：cargo build --release --features status-image（需系统 Chromium）
+```
+
+Agent 能力（`!mc` / `!wiki` / `!tmc`，下一阶段）的扩展点设计见
+[`docs/agent-design.md`](docs/agent-design.md)：新技能 = 一个 `CommandHandler` +
+一个 `DocumentSource`，注册进路由即可接入三端；未来智能路由（LLM）只替换匹配策略，
+不动 handler 与出站接口。
+
+---
+
+## 模块一览（Python 版，切流前保留）
 
 | 文件 | 作用 |
 |------|------|

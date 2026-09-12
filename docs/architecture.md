@@ -95,6 +95,35 @@ player_tracker.py 轮询状态 API→ 玩家快照
 - ChatBridge 断线后按退避重连。
 - 内存常驻约 40MB；开启状态图渲染时 Chromium 会额外占用，容器内存上限 1.2G、`shm_size` 512m。
 
+## Rust 版分层（`rust/`，v0.2 起）
+
+Rust 版复刻以上数据流，并把「消息如何被认领」收敛为一个统一路由层：
+
+```
+QQ 群事件 ─┐
+游戏聊天 ──┼─▶ InboundMessage(source, text) ─▶ CommandRouter ─▶ CommandHandler 依次认领
+chatroom ──┘                                       │   /chatroom /server  → SlashCommandAdapter
+                                                   │   !q                → QqForwardRelay（跨端中继）
+                                                   │   !snap             → SnapshotRelay
+                                                   └─ 未认领 → 原有流水线（QQ 消息进 forwarder）
+```
+
+三个关键抽象（是未来 agent 能力的接缝，见 `docs/agent-design.md`）：
+
+- **`ReplySink`**：回复到消息来源端（QQ 群 / 游戏广播 / chatroom 频道），handler 不感知传输。
+- **`Hub`**：跨端中继出口（向所有配置群发文本、游戏广播、写 chatroom）。
+- **`CommandHandler` + `CommandInfo`**：处理器与其元数据（名称 / 别名 / 触发形态 / 描述）。
+  `!mc` / `!wiki` / `!tmc` 等新技能各实现一个并注册即可接入三端；
+  未来智能路由（LLM 选取 handler）只替换 `CommandRouter` 的匹配策略，接口不动。
+
+对外还留了第二个接缝：`api/` 模块提供**独立 HTTP API**（默认回环 8199，配置段 `api`），
+读接口（状态 / 近期消息环形缓冲）+ token 保护的写接口（`POST /api/relay` 走 `Hub`），
+供 Web UI 与社区其他网站调用，并带 CORS；设计见 `docs/api-design.md`。
+三端入站在统一入口处写入 `RecentLog`（内存环形缓冲），是 API 与未来 UI 的数据源。
+
+出站协议仍是 `adapters/` 下的五个互不感知的适配器；`service.rs` 负责装配与三个轮询循环，
+与 Python 版 `main.py` 逐行为对应。
+
 ## 为什么这么切模块
 
 `onebot.py` / `forward_api.py` / `chatbridge.py` 三个协议适配器互不感知，各自只管字节流与

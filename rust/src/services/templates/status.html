@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+        font-family: 'Noto Sans CJK SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+        {background}
+        background-size: cover;
+        background-attachment: scroll;
+        padding: 40px;
+        display: inline-block;
+        color: #000;
+    }}
+    .container {{
+        background: rgba(255, 255, 255, 0.6);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 24px;
+        padding: 40px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        width: fit-content;
+        min-width: 600px;
+    }}
+    .section {{ margin-bottom: 40px; }}
+    .section-title {{
+        font-size: 36px; font-weight: 500; color: rgba(0, 0, 0, 0.9);
+        margin-bottom: 25px; padding-left: 15px;
+        border-left: 3px solid #4db6ac; letter-spacing: 1px;
+    }}
+    .items-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }}
+    .address-panel {{
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 16px;
+        padding: 22px 25px;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    }}
+    .address-row {{
+        display: grid;
+        grid-template-columns: minmax(245px, 1fr) auto;
+        align-items: baseline;
+        column-gap: 24px;
+        padding: 8px 0;
+        font-size: 25px;
+    }}
+    .address-label {{ min-width: 245px; color: rgba(0, 0, 0, 0.72); font-weight: 600; text-align: left; }}
+    .address-value {{ color: #000; font-weight: 500; letter-spacing: 0.3px; text-align: right; white-space: nowrap; }}
+    .item {{
+        background: rgba(255, 255, 255, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 16px; padding: 25px; margin-bottom: 20px;
+        position: relative; overflow: hidden;
+    }}
+    .item-name {{ font-size: 30px; font-weight: 600; color: #000; margin-bottom: 12px; white-space: nowrap; letter-spacing: 0.5px; }}
+    .status {{ font-size: 24px; font-weight: 500; margin-bottom: 10px; display: inline-block; padding: 6px 14px; border-radius: 20px; background: rgba(255, 255, 255, 0.2); }}
+    .detail {{ font-size: 26px; color: rgba(0, 0, 0, 0.6); }}
+    .players {{ margin-top: 15px; padding-left: 10px; border-left: 2px solid rgba(255, 255, 255, 0.1); }}
+    .player {{ font-size: 24px; color: rgba(0, 0, 0, 0.7); margin: 6px 0; }}
+    .divider {{ height: 1px; background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent); margin: 40px 0; }}
+</style>
+</head>
+<body>
+    <div class="container">
+        <div class="section">
+            <div class="section-title">节点状态</div>
+            <div class="address-panel">{addresses}</div>
+            <div class="items-grid">{routes}</div>
+        </div>
+        <div class="divider"></div>
+        <div class="section">
+            <div class="section-title">服务器状态</div>
+            <div class="items-grid">{servers}</div>
+        </div>
+    </div>
+</body>
+</html>

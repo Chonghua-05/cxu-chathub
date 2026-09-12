@@ -38,6 +38,12 @@
     "allow_from": [],
     "status_image": true
   },
+  "api": {
+    "enabled": true,
+    "listen_host": "127.0.0.1",
+    "listen_port": 8199,
+    "access_token": ""
+  },
   "state_path": "/data/state.json",
   "log_level": "INFO"
 }

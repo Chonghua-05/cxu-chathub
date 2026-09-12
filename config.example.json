@@ -55,10 +55,16 @@
     "skills": [
       {
         "name": "mc",
-        "description": "MC 查询（本地源码副本 + Minecraft Wiki，LLM 综合作答）",
+        "description": "MC 源码查询（本地反编译源码副本，只查源码）",
         "sources": [
-          {"type": "local", "root": "/data/docs/mc-source", "name": "mc-source", "extensions": [".java", ".md"]},
-          {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php", "name": "minecraft-wiki"}
+          {"type": "local", "root": "/data/docs/mc-source", "name": "mc-source", "extensions": [".java"]}
+        ]
+      },
+      {
+        "name": "aimc",
+        "description": "MC 源码释读（架构与逻辑设计解读文档；语料就位后生效）",
+        "sources": [
+          {"type": "local", "root": "/data/docs/aimc", "name": "mc-annotated", "extensions": [".md"]}
         ]
       },
       {

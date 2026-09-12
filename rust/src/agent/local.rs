@@ -30,7 +30,7 @@ const CODE_WINDOW_LINES: usize = 60;
 const SNIPPET_MAX_LINES: usize = 12;
 
 /// markdown 类扩展名：按标题行（`^#{1,6}\s`）分节；其余扩展名按固定行窗口分块。
-const MARKDOWN_EXTS: &[&str] = &[".md", ".txt"];
+const MARKDOWN_EXTS: &[&str] = &[".md", ".mdx", ".txt"];
 
 /// `extensions` 为空时的内置默认扩展名集合。
 const DEFAULT_EXTS: &[&str] = &[
@@ -64,9 +64,11 @@ struct Chunk {
     tf: HashMap<String, usize>,
 }
 
-/// 内存索引：条目列表。构建失败（根目录缺失等）时保持为空。
+/// 内存索引：条目列表 + 词的文档频率（IDF 用）。构建失败（根目录缺失等）时保持为空。
 struct Index {
     chunks: Vec<Chunk>,
+    /// term -> 含该词的分块数。常见词（如 "java"、"import"）靠 IDF 压权。
+    df: HashMap<String, u32>,
 }
 
 /// 本地文档/源码目录检索。首次 search 时惰性建索引（tokio OnceCell，只建一次，
@@ -134,7 +136,7 @@ impl DocumentSource for LocalDocSource {
                         Ok(index) => index,
                         Err(err) => {
                             warn!(error = %err, "本地文档索引构建任务异常，索引保持为空（重启进程前不会重试）");
-                            Index { chunks: Vec::new() }
+                            Index { chunks: Vec::new(), df: HashMap::new() }
                         }
                     }
                 }
@@ -149,7 +151,9 @@ impl DocumentSource for LocalDocSource {
             return Vec::new();
         }
 
-        // 打分：Σ 查询词在分块内的词频；词命中标题行（含标题文本子串）再 ×3。
+        // 打分：Σ 查询词 tf × 标题加成 × IDF（稀有词压制到处出现的高频词，
+        // 如代码语料里的 "mob"/"import"）；词命中标题行（含标题文本子串）再 ×3。
+        let total = index.chunks.len();
         let mut scored: Vec<(u64, &Chunk)> = index
             .chunks
             .iter()
@@ -158,12 +162,11 @@ impl DocumentSource for LocalDocSource {
                 let mut score = 0u64;
                 for term in &terms {
                     if let Some(tf) = chunk.tf.get(term) {
-                        let weight = if title_lower.contains(term.as_str()) {
-                            3
-                        } else {
-                            1
-                        };
-                        score += *tf as u64 * weight;
+                        let df = index.df.get(term).copied().unwrap_or(1).max(1) as f64;
+                        // ln(1 + N/df)：df=N（语料里到处都是）→ ≈0.7，df=1 → ≈ln(N)
+                        let idf_w = ((1.0 + total as f64 / df).ln() * 2.0).round().max(1.0) as u64;
+                        let title_w = if title_lower.contains(term.as_str()) { 3 } else { 1 };
+                        score += *tf as u64 * title_w * idf_w;
                     }
                 }
                 (score > 0).then_some((score, chunk))
@@ -175,9 +178,33 @@ impl DocumentSource for LocalDocSource {
                 .then_with(|| a.1.rel_path.cmp(&b.1.rel_path))
                 .then_with(|| a.1.start_line.cmp(&b.1.start_line))
         });
-        scored.truncate(limit);
 
-        scored
+        // 文件级聚合：同一文件多窗命中说明整份文件都相关（源码检索里文件名+全文
+        // 才是"哪个文件该看"的答案）。文件得分 = 最佳窗 + 其余窗得分的 1/5（阻尼，
+        // 避免长文件靠窗口数量取胜）；每个文件只出它得分最高的一段。
+        let mut best_per_file: HashMap<&str, (u64, u64, &Chunk)> = HashMap::new(); // rel_path -> (最佳分, 总分, 最佳窗)
+        for (score, chunk) in &scored {
+            let entry = best_per_file
+                .entry(chunk.rel_path.as_str())
+                .or_insert_with(|| (0, 0, chunk));
+            entry.1 += score;
+            if *score > entry.0 {
+                entry.0 = *score;
+                entry.2 = chunk;
+            }
+        }
+        let mut by_file: Vec<(u64, &Chunk)> = best_per_file
+            .into_values()
+            .map(|(best, sum, chunk)| (best + (sum - best) / 5, chunk))
+            .collect();
+        by_file.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.rel_path.cmp(&b.1.rel_path))
+                .then_with(|| a.1.start_line.cmp(&b.1.start_line))
+        });
+        by_file.truncate(limit);
+
+        by_file
             .into_iter()
             .map(|(_, chunk)| DocHit {
                 title: chunk.title.clone(),
@@ -210,7 +237,7 @@ fn build_index(root: &Path, extensions: &[String]) -> Index {
             root = %root.display(),
             "本地文档根目录不存在或不是目录，索引保持为空（目录可能后挂载；重启进程前不会重扫）"
         );
-        return Index { chunks: Vec::new() };
+        return Index { chunks: Vec::new(), df: HashMap::new() };
     }
     let mut files = 0usize;
     let mut chunks = Vec::new();
@@ -221,7 +248,14 @@ fn build_index(root: &Path, extensions: &[String]) -> Index {
         root = %root.display(),
         "本地文档索引构建完成"
     );
-    Index { chunks }
+    // 文档频率：含某词的分块数（IDF 打分用）。
+    let mut df: HashMap<String, u32> = HashMap::new();
+    for chunk in &chunks {
+        for term in chunk.tf.keys() {
+            *df.entry(term.clone()).or_insert(0) += 1;
+        }
+    }
+    Index { chunks, df }
 }
 
 /// 递归遍历目录：跳过隐藏项（`.` 前缀）、`target`/`node_modules`/`.git` 与符号链接。
@@ -323,6 +357,8 @@ fn index_file(
 }
 
 /// 把一段行（`lines` 的 1-based 起始行为 `start_line`）收进索引：算词频向量。
+/// 路径分词（camelCase 拆分，如 NaturalSpawner → natural + spawner）以 [`PATH_TOKEN_WEIGHT`]
+/// 计入 tf——代码检索里文件名往往是最强信号；`package`/`import` 行不计入（纯噪声）。
 fn push_chunk(
     lines: &[&str],
     rel_path: &str,
@@ -331,8 +367,20 @@ fn push_chunk(
     chunks: &mut Vec<Chunk>,
 ) {
     let mut tf: HashMap<String, usize> = HashMap::new();
-    for token in tokenize(&lines.join("\n")) {
+    let body = lines
+        .iter()
+        .copied()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !(trimmed.starts_with("import ") || trimmed.starts_with("package "))
+        })
+        .collect::<Vec<&str>>()
+        .join("\n");
+    for token in tokenize(&body) {
         *tf.entry(token).or_insert(0) += 1;
+    }
+    for token in tokenize_path(rel_path) {
+        *tf.entry(token).or_insert(0) += PATH_TOKEN_WEIGHT;
     }
     chunks.push(Chunk {
         rel_path: rel_path.to_string(),
@@ -374,8 +422,42 @@ fn is_heading_line(line: &str) -> bool {
 }
 
 /// 是否 CJK 表意文字（汉字主平面 + 扩展A + 兼容区）。
-fn is_cjk(ch: char) -> bool {
+pub(crate) fn is_cjk(ch: char) -> bool {
     matches!(ch, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}')
+}
+
+/// 路径词在 tf 里的固定计数：文件名/目录名是代码检索的最强信号之一。
+const PATH_TOKEN_WEIGHT: usize = 8;
+
+/// 路径分词：按非字母数字切段后做 camelCase 拆分并小写化。
+/// `src/main/java/net/minecraft/world/level/NaturalSpawner.java`
+///   → [src, main, java, net, minecraft, world, level, natural, spawner]
+fn tokenize_path(rel_path: &str) -> Vec<String> {
+    rel_path
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .flat_map(split_camel)
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// camelCase / PascalCase 拆分：小写→大写的跳变处断词（`NaturalSpawner` → natural + spawner）。
+fn split_camel(word: &str) -> Vec<String> {
+    let chars: Vec<char> = word.chars().collect();
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for (index, ch) in chars.iter().enumerate() {
+        if !cur.is_empty()
+            && ch.is_ascii_uppercase()
+            && chars[index - 1].is_ascii_lowercase()
+        {
+            out.push(std::mem::take(&mut cur));
+        }
+        cur.push(*ch);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out.into_iter().map(|w| w.to_lowercase()).collect()
 }
 
 /// 分词：小写化后，连续 ASCII 字母数字为词；连续 CJK 字符切重叠二元组（bigram），
@@ -453,29 +535,24 @@ mod tests {
         (dir, root)
     }
 
-    /// markdown 按标题分节：分数排序（标题 ×3 加成）、locator 行区间（1-based）、
-    /// 标题取标题行、snippet 含命中行。
+    /// markdown 按标题分节：文件级聚合（同文件多节命中只出最佳一节）、
+    /// locator 行区间（1-based）、标题取标题行、snippet 含命中行。
     #[tokio::test]
     async fn local_source_md_heading_chunks_score_and_locator() {
         let (_dir, root) = fixture();
         let source = LocalDocSource::new("local-docs", &root, vec![".md".into(), ".java".into()]);
         let hits = source.search("活塞 末影", 10).await;
 
-        // 命中 3 块：guide.md 第一节（活塞 tf=2 ×3 标题加成 = 6）、
-        // guide.md 第二节（末影 tf=1）、PistonBlock.java 注释（活塞 tf=1）。
-        assert_eq!(hits.len(), 3);
+        // 命中 2 个文件：guide.md 两个分节都命中但聚合为最佳一节（第一节：活塞 tf=2 ×3
+        // 标题加成，高于第二节的末影 tf=1）；PistonBlock.java 注释（活塞 tf=1）。
+        assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].title, "活塞与红石"); // 标题来自标题行，去掉 #
         assert_eq!(hits[0].locator, "guide.md:1-3"); // 1-based 行区间
         assert!(hits[0].snippet.starts_with("# 活塞与红石"));
         assert!(hits[0].snippet.contains("活塞推动方块向上运动。"));
 
-        // 同分（1 = 1）时按路径升序：guide.md 在 src/ 之前。
-        assert_eq!(hits[1].title, "末地传送门");
-        assert_eq!(hits[1].locator, "guide.md:4-5");
-        assert!(hits[1].snippet.contains("末影之眼可以定位要塞。"));
-
-        assert_eq!(hits[2].title, "PistonBlock.java");
-        assert_eq!(hits[2].locator, "src/PistonBlock.java:1-7");
+        assert_eq!(hits[1].title, "PistonBlock.java");
+        assert_eq!(hits[1].locator, "src/PistonBlock.java:1-7");
     }
 
     /// 代码文件：标题 = 文件名，不足 60 行整文件一个窗口，snippet 含命中行。

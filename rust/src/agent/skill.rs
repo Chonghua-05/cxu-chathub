@@ -24,6 +24,9 @@ use crate::router::{match_command, CommandHandler, CommandInfo, DispatchCtx, Inb
 /// 合并后的检索命中项：`(来源名, 命中项)`，出处标注用。
 type SourcedHit = (String, DocHit);
 
+/// 查询翻译提示词：中文问题 → 英文检索关键词（MC 术语用官方英文名）。
+const TRANSLATE_PROMPT: &str = "把下面的问题翻译成适合全文检索的英文关键词（Minecraft 领域术语用官方英文名，如 守卫者→Guardian、刷怪→mob spawning）。只输出关键词本身，不要解释。";
+
 /// 配置注册的通用文档查询技能：一个实例 = config 里的一条 skill 声明。
 pub struct DocQuerySkill {
     name: String,
@@ -60,6 +63,42 @@ impl DocQuerySkill {
 
     /// 并发查询所有源（每源 limit = max_results），交错合并：
     /// 源0第1条、源1第1条、源0第2条……总条数 ≤ max_results。
+    /// 带查询翻译的多查询检索：中文问题对英文语料（MC 源码 / 英文文档）无法直接命中，
+    /// 有 LLM 时把问题翻译成英文关键词，原文与译文各查一遍、按 locator 去重合并，
+    /// 总量 ≤ max_results。无 LLM / 无中文 / 翻译失败 → 只查原文（行为同旧）。
+    async fn search_queries(&self, original: &str) -> Vec<SourcedHit> {
+        let mut queries = vec![original.to_string()];
+        if original.chars().any(crate::agent::local::is_cjk) {
+            if let Some(llm) = &self.llm {
+                match llm.complete(TRANSLATE_PROMPT, original).await {
+                    Ok(translated) => {
+                        let translated = translated.trim();
+                        if !translated.is_empty() && !translated.eq_ignore_ascii_case(original) {
+                            queries.push(translated.to_string());
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(skill = %self.name, error = %err, "查询翻译失败，只用原文检索")
+                    }
+                }
+            }
+        }
+
+        let mut merged: Vec<SourcedHit> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for query in &queries {
+            for sourced in self.search_merged(query).await {
+                if seen.insert(sourced.1.locator.clone()) {
+                    merged.push(sourced);
+                    if merged.len() >= self.max_results {
+                        return merged;
+                    }
+                }
+            }
+        }
+        merged
+    }
+
     async fn search_merged(&self, query: &str) -> Vec<SourcedHit> {
         let per_source: Vec<(String, Vec<DocHit>)> =
             join_all(self.sources.iter().map(|source| async move {
@@ -193,8 +232,8 @@ impl CommandHandler for DocQuerySkill {
                 .await;
             return true;
         }
-        // 2. 并发查所有源并交错合并（每源 limit = max_results，总量 ≤ max_results）
-        let hits = self.search_merged(query).await;
+        // 2. 并发查所有源并合并（中文问题自动加查 LLM 译文，见 `search_queries`）
+        let hits = self.search_queries(query).await;
         // 3. 无命中 → 明确告知查不到，不编
         if hits.is_empty() {
             let _ = ctx
@@ -702,5 +741,67 @@ mod tests {
         assert_eq!(truncate_answer("🦀🦀🦀", 2), "🦀🦀…（已截断）");
         assert_eq!(truncate_answer("", 10), "");
         assert_eq!(truncate_answer("活塞", 1), "活…（已截断）");
+    }
+
+    /// 中文问题 + LLM → 先译文检索再原文检索；同一命中按 locator 去重。
+    #[tokio::test]
+    async fn skill_translates_cjk_query_via_llm_and_dedupes() {
+        let state = Arc::new(MockState::with_content("guardian spawning"));
+        let url = spawn_mock(state.clone()).await;
+        let source = Arc::new(FakeSource::new(
+            "mc-source",
+            vec![FakeSource::hit("Guardian", "Guardian.java:421", "守卫者生成")],
+        ));
+        let s = skill("!mc", vec![source.clone()], Some(llm_client(url)), 5);
+        let sink = FakeSink::default();
+
+        assert!(run(&s, &sink, "!mc 守卫者怎么刷怪").await);
+        // 两次检索：原文在前，LLM 译文在后
+        let requests = source.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].0, "守卫者怎么刷怪");
+        assert_eq!(requests[1].0, "guardian spawning");
+        // 两次查询命中同一 locator → prompt 里只出现一次（去重生效）
+        let body = state.body.lock().unwrap().clone();
+        let prompt = body["messages"][1]["content"].as_str().unwrap();
+        assert!(prompt.contains("[1] Guardian（mc-source · Guardian.java:421）"));
+        assert!(!prompt.contains("[2]"));
+    }
+
+    /// 纯 ASCII 查询不做翻译（无 LLM 调用成本）。
+    #[tokio::test]
+    async fn skill_ascii_query_skips_translation() {
+        let state = Arc::new(MockState::with_content("answer"));
+        let url = spawn_mock(state.clone()).await;
+        let source = Arc::new(FakeSource::new(
+            "mc-source",
+            vec![FakeSource::hit("Spawner", "Spawner.java:1", "片段")],
+        ));
+        let s = skill("!mc", vec![source.clone()], Some(llm_client(url)), 5);
+
+        assert!(run(&s, &FakeSink::default(), "!mc spawner").await);
+        assert_eq!(source.requests().len(), 1);
+    }
+
+    /// 翻译调用失败 → 只用原文检索，行为不变。
+    #[tokio::test]
+    async fn skill_translation_failure_falls_back_to_original_query() {
+        let url = spawn_mock(Arc::new(MockState::with_raw(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            serde_json::json!({}),
+        )))
+        .await;
+        let source = Arc::new(FakeSource::new(
+            "mc-source",
+            vec![FakeSource::hit("Guardian", "Guardian.java:421", "片段")],
+        ));
+        let s = skill("!mc", vec![source.clone()], Some(llm_client(url)), 5);
+        let sink = FakeSink::default();
+
+        assert!(run(&s, &sink, "!mc 守卫者").await);
+        assert_eq!(source.requests().len(), 1);
+        assert_eq!(source.requests()[0].0, "守卫者");
+        // 答案阶段的 LLM 也失败 → 摘录降级
+        assert!(sink.texts.lock().unwrap()[0].contains("检索结果"));
     }
 }

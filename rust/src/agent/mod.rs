@@ -25,11 +25,13 @@ use crate::config::{AgentConfig, SourceConfig};
 pub mod http;
 pub mod local;
 pub mod llm;
+pub mod repo;
 pub mod skill;
 
 use self::http::MediaWikiSource;
 use self::local::LocalDocSource;
 use self::llm::LlmClient;
+use self::repo::RepoSource;
 use self::skill::DocQuerySkill;
 
 /// 默认答案长度上限（agent.llm 未配置时摘录/回答仍按此截断）。
@@ -120,6 +122,33 @@ fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, String> {
             MediaWikiSource::new(name, api_url)
                 .map(|source| Arc::new(source) as Arc<dyn DocumentSource>)
                 .map_err(|err| err.to_string())
+        }
+        SourceConfig::Repo {
+            repo,
+            branch,
+            subdir,
+            site_url,
+            extensions,
+            name,
+        } => {
+            if repo.is_empty() {
+                return Err("repo 为空".into());
+            }
+            let name = if name.is_empty() { "repo" } else { name };
+            // 缓存放系统临时目录（容器内为 /tmp，随容器生命周期持久）；
+            // 语料下载一次后 24h 内不重复下载。
+            let cache_root = std::env::temp_dir().join("cxu-chathub-repo-cache");
+            RepoSource::new(
+                name,
+                repo,
+                branch,
+                subdir.clone(),
+                site_url.clone(),
+                extensions.clone(),
+                cache_root,
+            )
+            .map(|source| Arc::new(source) as Arc<dyn DocumentSource>)
+            .map_err(|err| err.to_string())
         }
     }
 }

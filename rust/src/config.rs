@@ -221,6 +221,30 @@ pub enum SourceConfig {
         #[serde(default)]
         name: String,
     },
+    /// GitHub 仓库文档（如 mdBook 站点的 markdown 源）：tarball 下载到本地缓存后
+    /// 委托本地检索。`repo` 填 "owner/name"（按 main/`branch` 拼 codeload 地址），
+    /// 或直接填完整 tarball URL（自托管/测试用）。
+    Repo {
+        repo: String,
+        #[serde(default = "default_branch")]
+        branch: String,
+        /// 只索引仓库里的这个子目录（如 mdBook 的 "src"）；空 = 整个仓库
+        #[serde(default)]
+        subdir: String,
+        /// 出处映射的站点地址（如 https://minecraftdocs.dev ，条目 URL = {site}/{相对路径去扩展名}）；
+        /// 空 = GitHub blob 地址（保留完整文件路径）
+        #[serde(default)]
+        site_url: String,
+        /// 索引扩展名白名单（后缀匹配，支持 ".zh.md" 双后缀）；空 = 内置默认集
+        #[serde(default)]
+        extensions: Vec<String>,
+        #[serde(default)]
+        name: String,
+    },
+}
+
+fn default_branch() -> String {
+    "main".into()
 }
 
 /// 一条命令 = 一个技能声明。新增查询命令只需在这里加一条，不改代码。

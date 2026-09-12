@@ -55,9 +55,24 @@
     "skills": [
       {
         "name": "mc",
-        "description": "MC 源码查询",
+        "description": "MC 查询（本地源码副本 + Minecraft Wiki，LLM 综合作答）",
         "sources": [
-          {"type": "local", "root": "/data/docs/mc-source", "name": "mc-source", "extensions": [".java", ".md"]}
+          {"type": "local", "root": "/data/docs/mc-source", "name": "mc-source", "extensions": [".java", ".md"]},
+          {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php", "name": "minecraft-wiki"}
+        ]
+      },
+      {
+        "name": "tmc",
+        "description": "GTMC 文章库（techmc.wiki，云端自动下载缓存）",
+        "sources": [
+          {"type": "repo", "repo": "techmc-wiki/articles", "branch": "main", "subdir": "", "site_url": "", "name": "gtmc-articles"}
+        ]
+      },
+      {
+        "name": "doc",
+        "description": "RMS 服务器文档（云端 RMS-Docs，自动下载缓存）",
+        "sources": [
+          {"type": "repo", "repo": "Conflux-Union/RMS-Docs", "branch": "master", "subdir": "", "site_url": "https://docs.rms.net.cn", "name": "rms-docs"}
         ]
       },
       {
@@ -65,13 +80,6 @@
         "description": "Minecraft Wiki 查询",
         "sources": [
           {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php", "name": "minecraft-wiki"}
-        ]
-      },
-      {
-        "name": "tmc",
-        "description": "TechMC Wiki 查询",
-        "sources": [
-          {"type": "local", "root": "/data/docs/techmc", "name": "techmc"}
         ]
       }
     ]

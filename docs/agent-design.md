@@ -9,27 +9,37 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
 
 | 积木 | 位置 | 职责 |
 |------|------|------|
-| `LocalDocSource` | `agent/local.rs` | 本地目录检索（md 按标题分节、代码按行窗分块，词频+CJK bigram 评分），出处=`文件:行号区间` |
-| `MediaWikiSource` | `agent/http.rs` | MediaWiki 站点 `api.php`（list=search → prop=extracts），出处=条目 URL |
+| `LocalDocSource` | `agent/local.rs` | 本地目录检索（md 按标题分节、代码按行窗分块；IDF 权重 + 路径 camelCase 分词 + import 降噪 + 文件级聚合），出处=`文件:行号区间` |
+| `MediaWikiSource` | `agent/http.rs` | MediaWiki 站点 `api.php`，三段式（对齐 astrbot minecraft_wiki 插件）：问句清洗 → **标题直达**（`redirects=1` 逐词试查，"活塞是"→"活塞" 命中整页）→ 全文搜索兜底；出处=条目 URL |
+| `RepoSource` | `agent/repo.rs` | GitHub 仓库文档源（如 mdBook 站点）：tarball 下载→本地缓存（24h 刷新，失败回退旧缓存）→委托本地检索，出处=站点页面 URL（路径百分号编码，兼容含空格/中文的文件名） |
 | `DocQuerySkill` | `agent/skill.rs` | 通用命令处理器：触发（边界安全，`!mc` 不吃 `!mcs`）→ 并发查所有源 → LLM 整理（可配）或摘录降级 → 回复到来源端 |
 
 一个命令 = `config.json` 里 `agent.skills` 的一条声明（名字、触发前缀、任意多个数据源）。
-**新增 `!xxx` 命令 = 改一行配置重启，零代码。** `!mc` / `!wiki` / `!tmc` 只是三个配置实例，
-`!mc` 接本地源码目录还是云端站点，同样是配置说了算。
+**新增 `!xxx` 命令 = 改一行配置重启，零代码。** 触发约定：全部走**显式命令强制触发**
+（`!mc` / `!wiki` / `!tmc` / `!doc`），不做任何自动/意图路由——那是智能路由阶段的事。
+`!mc` 是多源样板（本地源码 + Minecraft Wiki，LLM 综合作答），`!wiki` 单独直查 Wiki：
+两者共享同一份 wiki 数据源配置，删减任意一侧都只是一行配置的事。
 
 ```json
 "agent": {
   "enabled": true,
   "llm": { "api_url": "https://llm.example.com/v1/chat/completions", "api_key": "...", "model": "..." },
   "skills": [
-    { "name": "mc",   "description": "MC 源码查询", "max_results": 5,
-      "sources": [ {"type": "local", "root": "/data/docs/mc-source", "extensions": [".java", ".md"]} ] },
-    { "name": "wiki", "sources": [ {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php"} ] },
-    { "name": "tmc",  "sources": [ {"type": "local", "root": "/data/docs/techmc"},
-                                    {"type": "mediawiki", "api_url": "https://techmc.example.com/api.php"} ] }
+    { "name": "mc",   "description": "MC 查询（源码 + Wiki）", "max_results": 5,
+      "sources": [ {"type": "local", "root": "/data/docs/mc-source", "extensions": [".java", ".md"]},
+                    {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php"} ] },
+    { "name": "tmc",  "sources": [ {"type": "repo", "repo": "techmc-wiki/articles", "branch": "main",
+                                    "site_url": "", "extensions": [".zh.md", ".md"]} ] },
+    { "name": "doc",  "sources": [ {"type": "repo", "repo": "Conflux-Union/RMS-Docs", "branch": "master",
+                                    "site_url": "https://docs.rms.net.cn"} ] },
+    { "name": "wiki", "sources": [ {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php"} ] }
   ]
 }
 ```
+
+- `!tmc` 的语料是 GTMC 文章库（techmc.wiki 的源仓库，双语 `.zh.md`/`.en.md`）；
+  `site_url` 留空 → 出处用 GitHub blob 文件地址（保留完整路径）；`extensions`
+  用后缀匹配，可写 `.zh.md` 只收中文版（默认全收）。
 
 - 多源合并：结果按源交错、标注来源名、总量 ≤ `max_results`。
 - 单个源无效（如目录不存在）只跳过该源；全部无效则该技能不注册。
@@ -39,6 +49,9 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
 
 - 配置了 `agent.llm`（OpenAI 兼容 `/chat/completions`）：检索片段（编号 + 出处）连同问题
   交给 LLM，system prompt 强制「只依据片段回答、引用编号出处、查不到就明说、禁止编造」。
+- **中文问题 × 英文语料**（MC 源码 / MinecraftDocs 都是英文）：LLM 自动把问题翻译成英文
+  检索关键词（守卫者→Guardian、刷怪→mob spawning），原文与译文各查一遍、按出处去重合并；
+  无 LLM 或翻译失败只用原文（中文查英文语料会查不到——摘录模式请用英文关键词）。
 - **LLM 未配置 → 自动降级为纯摘录**（编号列表：标题 + 来源 · 出处 + 片段）；
   **LLM 调用失败 → 同样降级**并记日志。技能永远不会因为 LLM 挂掉而无响应。
 - 答案按 `max_answer_chars` 截断（UTF-8 安全）。
@@ -72,9 +85,14 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
 
 ## 6. 里程碑
 
-- [x] 检索层：`LocalDocSource` / `MediaWikiSource`（词频+CJK bigram 评分、两步 MediaWiki 查询）
-- [x] 技能层：`DocQuerySkill`（多源合并、触发边界、LLM 整理与降级、三端回复）
-- [x] 装配：`agent::build_skills()` 配置 → 注册；端到端集成测试（`tests/agent_flow.rs`）
-- [ ] 语料接入：MC 源码副本 / techmc wiki 导出放置到配置目录（部署侧操作）
-- [ ] 检索质量评测（带出处的准确率）与评分调优
+- [x] 检索层：`LocalDocSource` / `MediaWikiSource` / `RepoSource`（IDF+路径分词+文件级聚合、
+      两步 MediaWiki 查询、tarball 缓存）
+- [x] 技能层：`DocQuerySkill`（多源合并、触发边界、LLM 整理与降级、中文查询自动翻译、三端回复）
+- [x] 装配：`agent::build_skills()` 配置 → 注册；端到端集成测试（`tests/agent_flow.rs`）；
+      真实联网测试（`tests/repo_real.rs`，`cargo test --test repo_real -- --ignored`）
+- [x] 真实语料验证：MC 1.17.1 反编译源码（4144 个 .java，`spawner` → NaturalSpawner.java 排第一、
+      `guardian spawn water` → Guardian.java 排第一）；MinecraftDocs 云端接入
+      （"mob spawning" → mob tick / entity lifecycle / mob caps 等页面，出处映射 minecraftdocs.dev）
+- [x] 检索质量调试工具：`cargo run --release --example doc_query -- <目录> <查询词> [扩展名]`
+- [ ] 检索质量评测常态化：固定抽样问题集核对带出处的准确率，不达标先调分块与评分
 - [ ] LLM 智能路由灰度（自然语言 → 技能选择）

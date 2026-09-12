@@ -32,13 +32,22 @@ async fn spawn_llm_mock() -> String {
         post(move |body: Json<Value>| {
             let state = state.clone();
             async move {
-                if state.load(Ordering::SeqCst) {
+                let system = body.0["messages"][0]["content"].as_str().unwrap_or("");
+                let user = body.0["messages"][1]["content"].as_str().unwrap_or("").to_string();
+                // 查询翻译调用（技能层的中间步骤）：恒定成功
+                if system.contains("翻译") {
+                    return (
+                        StatusCode::OK,
+                        Json(json!({
+                            "choices": [{"message": {"role": "assistant", "content": "piston"}}]
+                        })),
+                    );
+                }
+                assert!(user.contains("活塞"), "回答调用的 user prompt 应包含问题与检索片段");
+                // 回答调用：第一次成功，之后 500（验证技能的降级摘录路径）
+                if state.swap(true, Ordering::SeqCst) {
                     return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "down"})));
                 }
-                let prompt = body.0["messages"][1]["content"].as_str().unwrap_or("").to_string();
-                assert!(prompt.contains("活塞"), "user prompt 应包含问题与检索片段");
-                // 第一次成功后立即降级：后续调用全部 500（验证技能的降级摘录路径）
-                state.store(true, Ordering::SeqCst);
                 (StatusCode::OK, Json(json!({
                     "choices": [{"message": {"role": "assistant", "content": "活塞是一种红石元件，被推动时会伸出方块臂。[1]"}}]
                 })))

@@ -30,11 +30,10 @@ use crate::router::{
 };
 use crate::services::commands::CommandService;
 use crate::services::forwarder::{ChatroomForwarder, ForwarderStats, ImageResolver};
-use crate::services::player_tracker::{OnEvent, PlayerTracker, TrackerStats};
+use crate::services::player_events::PlayerEventDetector;
 use crate::state::StateStore;
 
 const CHATROOM_READ_INTERVAL: u64 = 10;
-const PLAYER_POLL_INTERVAL: u64 = 30;
 /// 近期消息环形缓冲上限（Web UI / HTTP API 的数据源，仅内存不落盘）
 const RECENT_MESSAGES_CAP: usize = 200;
 /// 单条消息在缓冲里的文本长度上限
@@ -156,7 +155,7 @@ pub struct BridgeService {
     forwarder: Arc<ChatroomForwarder>,
     auth: Arc<ChatroomAuth>,
     reader: Arc<ChatroomReader>,
-    tracker: Arc<PlayerTracker>,
+    detector: PlayerEventDetector,
     commands: Arc<CommandService>,
     server: Arc<OneBotServer>,
     chatbridge: Option<Arc<ChatBridgeClient>>,
@@ -197,30 +196,6 @@ impl BridgeService {
         )?);
 
         let game_seq = Arc::new(AtomicU64::new(0));
-        let on_event: OnEvent = {
-            let api = forward_api.clone();
-            let seq = game_seq.clone();
-            Arc::new(move |event| {
-                let api = api.clone();
-                let seq = seq.clone();
-                Box::pin(async move {
-                    post_game_message(
-                        &api,
-                        &seq,
-                        "game-event",
-                        &event.format_message(None),
-                        &event.player,
-                        &event.player,
-                    )
-                    .await
-                })
-            })
-        };
-        let tracker = Arc::new(PlayerTracker::new(
-            cfg.chatroom.debounce_count,
-            Some(on_event),
-            &cfg.chatroom.status_api,
-        )?);
 
         let commands = Arc::new(CommandService::new(
             cfg.commands.group_allow_all,
@@ -230,6 +205,19 @@ impl BridgeService {
             &cfg.chatroom.status_api,
             cfg.chatroom.server_address_pairs(),
         )?);
+
+        // 玩家上下线推送：ChatBridge 系统广播 + 可配置正则（事件驱动，
+        // 替代旧的状态网站轮询差分——轮询会丢单次事件）
+        let detector = match PlayerEventDetector::new(
+            &cfg.chatroom.player_join_pattern,
+            &cfg.chatroom.player_quit_pattern,
+        ) {
+            Ok(detector) => detector,
+            Err(err) => {
+                warn!("玩家上下线正则非法，上下线推送已禁用: {err}");
+                PlayerEventDetector::disabled()
+            }
+        };
 
         let mut group_ids: Vec<i64> = cfg.group_ids().into_iter().collect();
         group_ids.sort_unstable();
@@ -301,7 +289,7 @@ impl BridgeService {
                 forwarder,
                 auth,
                 reader,
-                tracker,
+                detector,
                 commands,
                 chatbridge,
                 router: Arc::new(router),
@@ -340,8 +328,9 @@ impl BridgeService {
         self.forwarder.stats()
     }
 
-    pub fn tracker_stats(&self) -> TrackerStats {
-        self.tracker.stats()
+    /// 玩家上下线推送是否已启用（正则配置齐全）。
+    pub fn player_events_enabled(&self) -> bool {
+        self.detector.enabled()
     }
 
     pub fn command_stats(&self) -> std::collections::HashMap<String, u64> {
@@ -382,10 +371,6 @@ impl BridgeService {
                 tasks.push(tokio::spawn(async move { service.chatroom_loop().await }));
             } else {
                 warn!("未配置 refresh_token：!q 与 chatroom→游戏 已禁用");
-            }
-            if self.cfg.chatroom.player_tracking_enabled {
-                let service = self.clone();
-                tasks.push(tokio::spawn(async move { service.player_loop().await }));
             }
             if let Some(client) = &self.chatbridge {
                 let client = client.clone();
@@ -571,6 +556,18 @@ impl BridgeService {
             msg: &inbound,
         };
         self.router.dispatch(&ctx).await;
+
+        // 玩家上下线推送（ChatBridge 事件驱动，替代旧的状态网站轮询差分——
+        // 轮询可能丢单次事件）。防伪造门：只认系统广播（author 为空）或
+        // 玩家自报（author == 玩家名），他人冒充「xx 加入了游戏」不会触发。
+        if self.detector.enabled() {
+            if let Some(event) = self.detector.detect(sender, content) {
+                if author.is_empty() || author == event.player {
+                    let text = event.push_text();
+                    self.send_to_qq_groups(&text).await;
+                }
+            }
+        }
     }
 
     async fn forward_game_chat(&self, content: &str, nickname: &str, username: &str) {
@@ -583,17 +580,6 @@ impl BridgeService {
             username,
         )
         .await;
-    }
-
-    // --- 玩家轮询 ---
-    async fn player_loop(self: Arc<Self>) {
-        loop {
-            let events = self.tracker.poll_once().await;
-            for event in events {
-                info!("已推送: {}", event.format_message(None));
-            }
-            tokio::time::sleep(Duration::from_secs(PLAYER_POLL_INTERVAL)).await;
-        }
     }
 }
 

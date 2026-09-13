@@ -171,7 +171,6 @@ async fn status(State(state): State<ApiState>) -> Response {
     let self_id = service.server().connection().map(|c| c.self_id()).unwrap_or(0);
     let snapshot = service.state().snapshot();
     let forwarder = service.forwarder_stats();
-    let tracker = service.tracker_stats();
     let capabilities: Vec<Value> = service
         .capabilities()
         .iter()
@@ -204,10 +203,8 @@ async fn status(State(state): State<ApiState>) -> Response {
             "skipped_duplicate": forwarder.skipped_duplicate,
             "failed": forwarder.failed,
         },
-        "tracker": {
-            "online": tracker.online,
-            "offline": tracker.offline,
-            "failed": tracker.failed,
+        "player_events": {
+            "enabled": service.player_events_enabled(),
         },
         "commands": service.command_stats(),
         "state": {

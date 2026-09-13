@@ -33,7 +33,7 @@ async fn spawn_chatroom_mock() -> String {
 fn build_config(mock_base: &str, state_path: &str, token: &str) -> AppConfig {
     serde_json::from_value(json!({
         "onebot": {"listen_host": "127.0.0.1", "listen_port": 0, "path": "/ws", "access_token": "", "self_id": 10000},
-        "chatroom": {"base_url": mock_base, "channel_id": 1, "forward_token": "ftok", "refresh_token": "", "group_ids": [123], "qq_to_game_enabled": false, "player_tracking_enabled": false},
+        "chatroom": {"base_url": mock_base, "channel_id": 1, "forward_token": "ftok", "refresh_token": "", "group_ids": [123], "qq_to_game_enabled": false},
         "chatbridge": {"enabled": false, "host": ""},
         "commands": {"group_allow_all": true, "status_image": false},
         "api": {"enabled": true, "listen_host": "127.0.0.1", "listen_port": 0, "access_token": token},

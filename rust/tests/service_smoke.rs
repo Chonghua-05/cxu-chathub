@@ -76,7 +76,8 @@ fn build_config(mock_base: &str, state_path: &str) -> AppConfig {
             "qq_sync_enabled": true,
             "qq_forward_enabled": true,
             "qq_to_game_enabled": false,
-            "player_tracking_enabled": false,
+            "player_join_pattern": "^(.+?) 加入了游戏$",
+            "player_quit_pattern": "^(.+?) 离开了游戏$",
             "voice_api": format!("{mock_base}/api/voice/qqbot/get_voice_channel_people"),
             "status_api": format!("{mock_base}/api/status"),
             "server_addresses": [["主IP", "game.example.com"]]
@@ -233,5 +234,55 @@ async fn smoke_dedup_command_and_auth() {
     )
     .await;
 
+    // 6) 玩家上下线推送（ChatBridge 事件驱动）：系统广播（author 为空）→ QQ 群推送
+    service.on_game_chat("snapshot", "", "Steve 加入了游戏").await;
+    wait_for(
+        || {
+            sent_texts(&actions)
+                .iter()
+                .any(|text| text.contains("Steve 上线"))
+        },
+        "上线广播应推送到 QQ 群",
+    )
+    .await;
+    service.on_game_chat("snapshot", "", "Steve 离开了游戏").await;
+    wait_for(
+        || {
+            sent_texts(&actions)
+                .iter()
+                .any(|text| text.contains("Steve 下线"))
+        },
+        "下线广播应推送到 QQ 群",
+    )
+    .await;
+
+    // 7) 防伪造：他人冒充「xx 加入了游戏」（author ≠ 玩家名）不触发推送
+    let texts_before = sent_texts(&actions).len();
+    service.on_game_chat("web", "Hacker", "Steve 加入了游戏").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        sent_texts(&actions).len(),
+        texts_before,
+        "他人伪造的上线广播不应触发推送"
+    );
+
     service.stop().await;
+}
+
+/// 取 pump 记录里所有 send_group_msg 的文本内容。
+fn sent_texts(actions: &Actions) -> Vec<String> {
+    actions
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.get("action").and_then(Value::as_str) == Some("send_group_msg"))
+        .filter_map(|a| {
+            let texts: Vec<String> = a["params"]["message"]
+                .as_array()?
+                .iter()
+                .filter_map(|seg| seg["data"]["text"].as_str().map(|s| s.to_string()))
+                .collect();
+            Some(texts.join(""))
+        })
+        .collect()
 }

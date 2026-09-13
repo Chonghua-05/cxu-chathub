@@ -28,11 +28,12 @@
 | `server_addresses` | [label, value][] | `[["主IP", "game.example.com"]]` | 状态图里展示的服务器地址列表 |
 | `group_ids` | int[] | `[]` | 允许同步的 QQ 群号列表（白名单） |
 | `poll_interval` | int | `10` | 读方向轮询间隔（秒） |
-| `debounce_count` | int | `2` | 同一条消息需连续出现在几次快照中才上报（防抖） |
+| `debounce_count` | int | `2` | （仅 Python 版）快照防抖次数；Rust 版已改事件驱动，忽略此字段 |
 | `qq_sync_enabled` | bool | `true` | QQ 群 → chatroom 总开关 |
 | `qq_forward_enabled` | bool | `true` | chatroom → QQ 群（`!q`）开关 |
 | `qq_to_game_enabled` | bool | `true` | `!q` 同时转发到游戏内 |
-| `player_tracking_enabled` | bool | `false` | 玩家上下线推送开关 |
+| `player_join_pattern` | str | `""` | 玩家加入广播的识别正则（含一个玩家名捕获组），如 `^(.+?) 加入了游戏$`；空 = 不推送上线。数据源是 ChatBridge 系统广播，事件驱动不丢条目 |
+| `player_quit_pattern` | str | `""` | 玩家离开广播的识别正则，如 `^(.+?) 离开了游戏$`；空 = 不推送下线 |
 | `snapshot_sender` | str | `snapshot` | 快照消息的发送者标识 |
 | `snapshot_prefix` | str | `!snap` | 快照消息前缀 |
 

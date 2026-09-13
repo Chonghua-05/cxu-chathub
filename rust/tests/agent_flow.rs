@@ -72,7 +72,7 @@ fn fixture_docs(dir: &std::path::Path) {
 fn build_config(llm_base: &str, docs_root: &std::path::Path, state_path: &str) -> AppConfig {
     serde_json::from_value(json!({
         "onebot": {"listen_host": "127.0.0.1", "listen_port": 0, "path": "/ws", "access_token": "tok", "self_id": 10000},
-        "chatroom": {"base_url": "https://chatroom.example.com", "channel_id": 1, "forward_token": "", "group_ids": [123], "player_tracking_enabled": false},
+        "chatroom": {"base_url": "https://chatroom.example.com", "channel_id": 1, "forward_token": "", "group_ids": [123]},
         "chatbridge": {"enabled": false, "host": ""},
         "commands": {"group_allow_all": true, "status_image": false},
         "api": {"enabled": false},

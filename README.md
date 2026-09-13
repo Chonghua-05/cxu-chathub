@@ -102,7 +102,7 @@ NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `d
 | `adapters/chatroom_read.rs` | 读方向轮询、读游标、`!q` 解析 |
 | `adapters/chatbridge.rs` | ChatBridge 客户端（4 字节长度前缀 + AES-CBC；与 Python 版逐字节对拍） |
 | `services/forwarder.rs` | QQ 群 → chatroom 流水线（去重 / 图片压缩 / 引用回填） |
-| `services/player_tracker.rs` | 玩家快照差分 + 防抖 + 事件重试 |
+| `services/player_events.rs` | 玩家上下线推送（ChatBridge 系统广播 + 可配置正则，事件驱动不丢条目） |
 | `services/commands.rs` / `status_render.rs` | `/chatroom` `/server` 命令与状态图（Chromium 渲染由 `status-image` feature 门控，自动回退文本） |
 | `router/` | **统一消息路由**：三端入站汇入 `CommandRouter`，`/命令`、`!q`、`!snap` 均为注册其上的 `CommandHandler` |
 | `agent/` | **agent 能力（已实现）**：命令与文档源全部由 `agent.skills` 配置注册——`LocalDocSource`（本地目录，文件:行号出处）+ `MediaWikiSource`（云端 api.php）+ 通用 `DocQuerySkill`（LLM 整理、失败自动降级摘录）；设计见 [`docs/agent-design.md`](docs/agent-design.md) |

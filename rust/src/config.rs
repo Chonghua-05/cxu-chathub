@@ -55,12 +55,14 @@ pub struct ChatroomConfig {
     pub forward_token: String,
     pub refresh_token: String,
     pub group_ids: Vec<i64>,
-    pub poll_interval: u64,
-    pub debounce_count: u32,
     pub qq_sync_enabled: bool,
     pub qq_forward_enabled: bool,
     pub qq_to_game_enabled: bool,
-    pub player_tracking_enabled: bool,
+    /// 玩家加入广播的识别正则（含一个玩家名捕获组），如 `^(.+?) 加入了游戏$`；
+    /// 空 = 不推送上线事件
+    pub player_join_pattern: String,
+    /// 玩家离开广播的识别正则，如 `^(.+?) 离开了游戏$`；空 = 不推送下线事件
+    pub player_quit_pattern: String,
     pub snapshot_sender: String,
     pub snapshot_prefix: String,
     /// 以下三项是部署方自己的服务地址，示例值必须在 config.json 里覆盖
@@ -77,12 +79,11 @@ impl Default for ChatroomConfig {
             forward_token: String::new(),
             refresh_token: String::new(),
             group_ids: Vec::new(),
-            poll_interval: 10,
-            debounce_count: 2,
             qq_sync_enabled: true,
             qq_forward_enabled: true,
             qq_to_game_enabled: true,
-            player_tracking_enabled: false,
+            player_join_pattern: String::new(),
+            player_quit_pattern: String::new(),
             snapshot_sender: "snapshot".into(),
             snapshot_prefix: "!snap".into(),
             voice_api:

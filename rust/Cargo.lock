@@ -259,6 +259,7 @@ dependencies = [
  "hex",
  "image",
  "indexmap",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

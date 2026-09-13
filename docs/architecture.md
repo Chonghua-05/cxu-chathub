@@ -52,16 +52,19 @@ chatbridge.py ── AES-CBC over TCP(21027) ──▶ MC 服务端插件
 - 帧格式：4 字节大端长度前缀 + AES-CBC 密文，与旧旧框架插件协议一致。
 - `name` 字段标识来源（默认 `web`），服务端据此区分客户端。
 
-### D. 玩家上下线
+### D. 玩家上下线（Rust 版：ChatBridge 事件驱动）
 
 ```
-player_tracker.py 轮询状态 API→ 玩家快照
-      ──▶ 与上一快照做差集 → PlayerEvent(上线/下线)
-      ──▶ 状态驱动防抖（连续 debounce_count 次快照一致才上报）
-      ──▶ chatbridge 推送到 chatroom（source: "game"）
+MC 服务端插件 ──ChatBridge 系统广播──▶ on_game_chat（author 为空）
+      ──▶ player_events.rs 正则识别（player_join_pattern / player_quit_pattern）
+      ──▶ 提取玩家名 → QQ 群推送「🎮 xx 上线 / 🚪 xx 下线」
 ```
 
-防抖的意义：MC 服务端统计存在抖动（假上线/假下线），快照差集必须先稳定再上报。
+为什么不用状态网站轮询做差分：轮询天然可能丢掉单次事件（两次轮询之间上线又下线），
+而上下线推送恰恰要求每一条都不丢——事件源就在 ChatBridge，直接用它。
+防伪造：只认系统广播（author 为空）或玩家自报（author == 玩家名），
+他人冒充「xx 加入了游戏」不会触发推送。`/status` 命令的数据仍来自状态网站——
+那边只关心当前状态，不怕丢单次事件。（Python 版仍为轮询+防抖，切流后移除。）
 
 ### E. 群命令
 

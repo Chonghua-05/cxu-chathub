@@ -8,7 +8,7 @@ asyncio 服务，跑在云主机 Docker 上，与旧框架和 AI 服务完全解
 
 - 仓库名：`cxu-chathub`
 - Python 包名：`chatroom_bridge`，容器名 `chatroom-bridge`（暂未改名，避免打断线上部署）
-- 版本：`0.1.0`
+- 版本：`0.2.0`（Rust 重写；Python 版已下线）
 
 ---
 
@@ -24,7 +24,8 @@ asyncio 服务，跑在云主机 Docker 上，与旧框架和 AI 服务完全解
 
 设计要点：
 
-- **零 AI 依赖**：纯 aiohttp + pycryptodome，常驻内存约 40MB（开启状态图渲染时容器上限 1.2G）。
+- **零 AI 依赖**：Rust 单进程（tokio + axum；原 Python 版 aiohttp + pycryptodome 已下线），常驻内存约 40MB
+  （开启状态图渲染时容器上限 1.2G）。
 - **单进程、无状态外部依赖**：去重表与读游标落在 `state.json`（原子写、损坏自愈）。
 - **复用已有链路**：直接监听 `127.0.0.1:6199`，即 NapCat 中「NapCat 客户端」客户端原本指向的地址，
   切换时不需要动 NapCat 配置、不需要放行新端口。
@@ -124,7 +125,7 @@ Agent 能力（`!mc` / `!wiki` / `!tmc`，下一阶段）的扩展点设计见
 
 ---
 
-## 模块一览（Python 版，切流前保留）
+## 模块一览（Python 版，已下线，保留供回滚参照）
 
 | 文件 | 作用 |
 |------|------|

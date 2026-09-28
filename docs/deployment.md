@@ -69,7 +69,7 @@ git pull
 docker compose up -d --build
 ```
 
-## 6. 切换到 Rust 版（v0.2）
+## 6. 切换到 Rust 版（v0.2，已于 2026-09-13 完成）
 
 Rust 版与 Python 版**配置与状态格式完全兼容**（`config.json` 原样可用、`state.json`
 的 forwarded / cursor / refresh_token 结构一致），NapCat 侧零改动：
@@ -88,7 +88,7 @@ docker compose logs -f --tail 50 chatroom-bridge-rust
   Python 版无此端口）。容器内已监听，compose 未映射该端口——需要给 Web UI / 其他
   站点用时再加 `127.0.0.1:8199:8199` 映射或走反代，并先配好 `api.access_token`。
   见 [`docs/api-design.md`](api-design.md)。
-- 验证通过后（见 `docs/roadmap.md` v0.2）再下线 Python 版服务定义。
+- **切流已完成**（2026-09-13）：Rust 版为线上唯一实现；Python 版服务定义保留在 compose 注释中，可回滚。
 curl -s http://127.0.0.1:6199/healthz
 ```
 

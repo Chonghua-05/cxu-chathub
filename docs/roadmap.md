@@ -3,6 +3,17 @@
 本仓库的定位是 **本社区的消息与服务中枢**，长期会承载多类常驻服务和有限的 Agent 能力。
 下面按「已经到的 → 下一步 → 更远」排列，不承诺时间点。
 
+## 当前待办（TODO，面向接手开发者）
+
+> 按优先级排列。已完成/历史项见下方各版本清单。
+
+- [ ] **提交工作区改动**：`rust/src/services/status_render.rs`（状态图渲染性能优化）
+      已编译上线，但源码尚未 commit。
+- [ ] **v0.3 剩余**：语料接入（把 MC 源码副本 / techmc wiki 导出放进配置目录并启用
+      `agent.skills`）、检索质量评测（抽样问题集核对带出处准确率）、LLM 智能路由灰度。
+- [ ] **v0.4 服务化**：子服务边界拆分、配置热重载（SIGHUP）、结构化 JSON 日志、`/metrics`。
+- [ ] **更远**：多频道 / 多服务器、发布到包管理器、插件化。
+
 ## v0.1
 
 - [x] QQ 群 ↔ chatroom 双向同步（文本 / 图片 / 引用）
@@ -12,19 +23,23 @@
 - [x] 去重表 / 读游标 / refresh token 持久化（原子写、损坏自愈）
 - [x] 单元测试 + 一条真实 WS 装配烟测
 
-## v0.2 —— Rust 重写（进行中）
+## v0.2 —— Rust 重写（已完成，2026-09-13 切流上线）
 
-当前工作重心：用 Rust 重写整套服务（`rust/`，包 `chatroom-bridge`），**行为对齐 Python 版**。
-Python 版仍是线上实现；Rust 版验收通过后才切流，此前的条目均为待验收状态。
+用 Rust 重写整套服务（`rust/`，包 `chatroom-bridge`），**行为对齐 Python 版**。
+**Rust 版已于 2026-09-13 在云主机切流上线为唯一线上实现**（镜像 `cxu-chathub:rust-v0.2`、
+容器 `chatroom-bridge`）；Python 版代码保留在 `src/`，仅供回滚参照。
 
-- [ ] 行为对齐：三端互通、群命令（`/chatroom` `/server`）、去重 / 游标 / refresh token
+- [x] 行为对齐：三端互通、群命令（`/chatroom` `/server`）、去重 / 游标 / refresh token
       持久化逐一对齐 Python 版
-- [ ] 部署件：`rust/Dockerfile` 多阶段构建（`STATUS_IMAGE` 可选 Chromium 变体）+
+- [x] 部署件：`rust/Dockerfile` 多阶段构建（`STATUS_IMAGE` 可选 Chromium 变体）+
       `docker-compose.yml` 的 `rust` profile（与 Python 版二选一，6199 端口冲突）
-- [ ] 切流验收：`state.json` 与 Python 版互相兼容（`./data` 目录共用），切流后
+- [x] 切流验收：`state.json` 与 Python 版互相兼容（`./data` 目录共用），切流后
       去重表与读游标不丢
-- [ ] 架构预留：agent 能力扩展点固化（`router::CommandHandler` / `agent::DocumentSource`），
+- [x] 架构预留：agent 能力扩展点固化（`router::CommandHandler` / `agent::DocumentSource`），
       设计见 [`docs/agent-design.md`](agent-design.md)，技能实现属 v0.3
+- [x] 性能优化：`/server` 状态图渲染改为常驻 Chromium 复用（+ 背景重编码缓存、
+      去掉多余导航），端到端 ~9s → ~1s 级；已随 2026-09-13 切流上线，
+      **源码尚未提交**（工作区脏，待 commit）
 
 ## v0.3 —— Agent 能力（顺延，原 v0.2 项）
 

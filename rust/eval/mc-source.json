@@ -1,0 +1,33 @@
+{
+  "name": "mc-source",
+  "description": "MC 1.17.1 反编译源码（!mc 语料）。语料未就位：root 为线上部署路径，本地跑法 cargo run --release --example eval_retrieval -- rust/eval/mc-source.json --root <源码目录>。前两题为 4c0342f 实测锚点，其余按 Mojang 官方映射类名出题（语料就位后首轮运行核对）",
+  "corpus": {
+    "type": "local",
+    "root": "/data/docs/mc-source",
+    "extensions": [".java"],
+    "name": "mc-source"
+  },
+  "top_k": 5,
+  "cases": [
+    { "id": "spawner-logic", "query": "spawner", "expect": ["naturalspawner.java"], "max_rank": 1,
+      "note": "已实测锚点（4c0342f）：NaturalSpawner.java 排第一" },
+    { "id": "guardian-spawning", "query": "guardian spawn water", "expect": ["guardian.java"], "max_rank": 1,
+      "note": "已实测锚点（4c0342f）：Guardian.java 排第一" },
+    { "id": "villager", "query": "villager", "expect": ["villager.java"], "max_rank": 3,
+      "note": "net/minecraft/world/entity/npc/Villager（官方映射类名）" },
+    { "id": "beacon", "query": "beacon", "expect": ["beaconblockentity.java"], "max_rank": 3,
+      "note": "net/minecraft/world/level/block/entity/BeaconBlockEntity" },
+    { "id": "hopper", "query": "hopper", "expect": ["hopperblockentity.java", "hopperblock.java"], "max_rank": 3,
+      "note": "HopperBlockEntity / HopperBlock 任一" },
+    { "id": "ender-pearl", "query": "ender pearl", "expect": ["enderpearl.java", "enderpearlitem.java"], "max_rank": 3,
+      "note": "EnderPearl / EnderPearlItem 任一" },
+    { "id": "redstone-wire", "query": "redstone wire", "expect": ["redstonewireblock.java"], "max_rank": 3,
+      "note": "net/minecraft/world/level/block/RedStoneWireBlock" },
+    { "id": "enchantment", "query": "enchantment", "expect": ["enchantmenthelper.java", "enchantment.java"], "max_rank": 5,
+      "note": "EnchantmentHelper / Enchantment 任一（enchant* 词族文件多，放宽到 top5）" },
+    { "id": "experience-orb", "query": "experience orb", "expect": ["experienceorb.java"], "max_rank": 3,
+      "note": "net/minecraft/world/entity/ExperienceOrb" },
+    { "id": "slime-block", "query": "slime block", "expect": ["slimeblock.java"], "max_rank": 3,
+      "note": "net/minecraft/world/level/block/SlimeBlock" }
+  ]
+}

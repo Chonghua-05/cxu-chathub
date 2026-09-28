@@ -256,10 +256,37 @@ impl BridgeService {
                 .len()
                 .cmp(&a.info().trigger.len())
         });
+        let mut skill_arcs: Vec<Arc<dyn CommandHandler>> = Vec::new();
         for skill in agent_skills {
             let meta = skill.info();
             info!("注册 agent 技能: {} ({})", meta.name, meta.trigger);
-            router.register(Arc::new(skill));
+            let arc: Arc<dyn CommandHandler> = Arc::new(skill);
+            skill_arcs.push(arc.clone());
+            router.register(arc);
+        }
+
+        // LLM 智能路由（灰度）：注册在最末——只有显式命令全部不认领的消息才会
+        // 到这里；LLM 拒绝路由时消息照常进转发流水线。见 docs/agent-design.md §4
+        let routable = skill_arcs
+            .into_iter()
+            .map(|handler| {
+                let info = handler.info();
+                crate::agent::routing::RoutableSkill { handler, info }
+            })
+            .collect();
+        match crate::agent::routing::LlmSkillRouter::new(&cfg.agent, routable) {
+            Ok(router_handler) => {
+                info!(
+                    groups = ?cfg.agent.routing.group_ids,
+                    "LLM 智能路由已启用（灰度）"
+                );
+                router.register(Arc::new(router_handler));
+            }
+            Err(reason) => {
+                if cfg.agent.routing.enabled {
+                    warn!("LLM 智能路由未启用: {reason}");
+                }
+            }
         }
 
         let service = Arc::new_cyclic(|weak: &Weak<BridgeService>| {

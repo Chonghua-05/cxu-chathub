@@ -213,6 +213,9 @@ pub enum SourceConfig {
         /// 文件扩展名白名单（含点，如 ".java"）；空 = 内置默认集
         #[serde(default)]
         extensions: Vec<String>,
+        /// 路径排除子串（rel_path 含任一即不索引，用于索引页/目录页等检索噪声）
+        #[serde(default)]
+        exclude: Vec<String>,
         #[serde(default)]
         name: String,
     },
@@ -239,6 +242,9 @@ pub enum SourceConfig {
         /// 索引扩展名白名单（后缀匹配，支持 ".zh.md" 双后缀）；空 = 内置默认集
         #[serde(default)]
         extensions: Vec<String>,
+        /// 路径排除子串（rel_path 含任一即不索引，如 mdBook 的 SUMMARY.md / 类名索引页）
+        #[serde(default)]
+        exclude: Vec<String>,
         #[serde(default)]
         name: String,
     },
@@ -275,6 +281,18 @@ impl Default for SkillConfig {
     }
 }
 
+/// LLM 智能路由（灰度）配置：把不带命令前缀的自然语言消息路由到技能。
+/// 默认全关；启用还依赖 `agent.llm` 已配置。见 `agent/routing.rs` 与
+/// `docs/agent-design.md` §4。
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct RoutingConfig {
+    /// 总开关（默认 false）
+    pub enabled: bool,
+    /// 灰度群白名单（QQ 群号）：只路由这些群的自然语言消息；空 = 不生效
+    pub group_ids: Vec<i64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct AgentConfig {
@@ -283,6 +301,8 @@ pub struct AgentConfig {
     pub llm: Option<LlmConfig>,
     /// 命令注册表：!mc / !wiki / !tmc 以及未来任意命令都是这里的一条记录
     pub skills: Vec<SkillConfig>,
+    /// 智能路由（灰度，默认关闭）
+    pub routing: RoutingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]

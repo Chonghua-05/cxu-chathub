@@ -1,0 +1,28 @@
+{
+  "name": "rms-docs",
+  "description": "RMS 社区文档（Conflux-Union/RMS-Docs，!doc 语料；语料为社区公约 + 红石教程讲义）",
+  "corpus": {
+    "type": "repo",
+    "repo": "Conflux-Union/RMS-Docs",
+    "branch": "master",
+    "site_url": "https://docs.rms.net.cn",
+    "name": "rms-docs"
+  },
+  "top_k": 5,
+  "cases": [
+    { "id": "server-rules", "query": "规则", "expect": ["TOS"], "max_rank": 1,
+      "note": "实测：规则正文在 TOS.md 的「3.4 服务器规则」节，排第一；「服务器 规定」双词形态被稀释（Rules 总纲仅第 4），检索层评测用关键词形态" },
+    { "id": "new-players", "query": "新人", "expect": ["NewPlayers"], "max_rank": 1,
+      "note": "实测：NewPlayers.md 标题「新人须知」排第一——语料用「新人」而非「新手」（「新手」零命中）" },
+    { "id": "bud", "query": "BUD", "expect": ["Updates and BUD"], "max_rank": 2,
+      "note": "RMS Tutorial/Lecture Notes/1.0.1 Updates and BUD.md" },
+    { "id": "quasi-connectivity", "query": "quasi", "expect": ["Quasi-Connectivity"], "max_rank": 2,
+      "note": "RMS Tutorial/Lecture Notes/1.0.2 Quasi-Connectivity.md" },
+    { "id": "logic-gates", "query": "logic gates", "expect": ["Logic gates"], "max_rank": 3,
+      "note": "RMS Tutorial/Lecture Notes/1.A.1 Basic Logic gates in MC.md" },
+    { "id": "projects-list", "query": "projects", "expect": ["Projects"], "max_rank": 3,
+      "note": "5. Projects 1.17.md / 7. Projects 1.21.md 任一" },
+    { "id": "server-info", "query": "server info", "expect": ["ServerInfo"], "max_rank": 5,
+      "note": "2. ServerInfo.md（路径 camelCase 分词 server+info）" }
+  ]
+}

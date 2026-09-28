@@ -1,0 +1,28 @@
+{
+  "name": "mc-wiki",
+  "description": "中文 Minecraft Wiki（zh.minecraft.wiki，!wiki 语料）",
+  "corpus": {
+    "type": "mediawiki",
+    "api_url": "https://zh.minecraft.wiki/api.php",
+    "name": "minecraft-wiki"
+  },
+  "top_k": 5,
+  "cases": [
+    { "id": "piston", "query": "活塞", "expect": ["/wiki/活塞"], "max_rank": 1,
+      "note": "标题直达：查询词即条目名" },
+    { "id": "spawner", "query": "刷怪笼", "expect": ["/wiki/刷怪笼"], "max_rank": 1,
+      "note": "标题直达" },
+    { "id": "ender-dragon", "query": "末影龙", "expect": ["/wiki/末影龙"], "max_rank": 1,
+      "note": "标题直达" },
+    { "id": "redstone-comparator", "query": "红石比较器", "expect": ["/wiki/红石比较器"], "max_rank": 1,
+      "note": "标题直达" },
+    { "id": "enchanting-table", "query": "附魔台", "expect": ["/wiki/附魔台"], "max_rank": 1,
+      "note": "标题直达" },
+    { "id": "hopper", "query": "漏斗", "expect": ["/wiki/漏斗"], "max_rank": 1,
+      "note": "标题直达" },
+    { "id": "iron-golem", "query": "铁傀儡", "expect": ["/wiki/铁傀儡"], "max_rank": 1,
+      "note": "标题直达" },
+    { "id": "beacon", "query": "信标", "expect": ["/wiki/信标"], "max_rank": 1,
+      "note": "标题直达（若首条为消歧义页则按实测调整）" }
+  ]
+}

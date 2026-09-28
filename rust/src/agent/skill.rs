@@ -25,7 +25,8 @@ use crate::router::{match_command, CommandHandler, CommandInfo, DispatchCtx, Inb
 type SourcedHit = (String, DocHit);
 
 /// 查询翻译提示词：中文问题 → 英文检索关键词（MC 术语用官方英文名）。
-const TRANSLATE_PROMPT: &str = "把下面的问题翻译成适合全文检索的英文关键词（Minecraft 领域术语用官方英文名，如 守卫者→Guardian、刷怪→mob spawning）。只输出关键词本身，不要解释。";
+/// pub(crate)：检索质量评测（`agent::eval`）对 question 用例复用同一提示词。
+pub(crate) const TRANSLATE_PROMPT: &str = "把下面的问题翻译成适合全文检索的英文关键词（Minecraft 领域术语用官方英文名，如 守卫者→Guardian、刷怪→mob spawning）。只输出关键词本身，不要解释。";
 
 /// 配置注册的通用文档查询技能：一个实例 = config 里的一条 skill 声明。
 pub struct DocQuerySkill {

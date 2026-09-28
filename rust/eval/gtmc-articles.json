@@ -1,0 +1,36 @@
+{
+  "name": "gtmc-articles",
+  "description": "GTMC 文章库（techmc.wiki 源仓库，!tmc 语料）",
+  "corpus": {
+    "type": "repo",
+    "repo": "techmc-wiki/articles",
+    "branch": "main",
+    "extensions": [".zh.md", ".md"],
+    "name": "gtmc"
+  },
+  "top_k": 5,
+  "cases": [
+    { "id": "block-update", "query": "方块更新", "expect": ["BlockUpdate/"], "max_rank": 1,
+      "note": "BlockUpdate 主题目录（README + 概念/分析两篇）" },
+    { "id": "scheduled-tick", "query": "计划刻", "expect": ["MicroTiming/计划刻"], "max_rank": 1,
+      "note": "MicroTiming/计划刻与计划刻元件.zh.md" },
+    { "id": "block-event", "query": "方块事件", "expect": ["MicroTiming/方块事件"], "max_rank": 2,
+      "note": "实测：专属条目排第 2，第 1 名是《活塞：方块事件与方块实体》的 onSyncedBlockEvent 小节（同样切题）——top-2 内可接受" },
+    { "id": "entity-collision", "query": "碰撞", "expect": ["EntityMove/02"], "max_rank": 1,
+      "note": "实测：单词查询「碰撞」EntityMove/02 排第一；双词「实体 碰撞」被高频词「实体」稀释掉到第 4（泛实体文章上位），检索层评测用关键词形态" },
+    { "id": "ticket", "query": "加载票", "expect": ["加载票机制"], "max_rank": 1,
+      "note": "_Drafts/ChunkMechanics/06-加载票机制.zh.md" },
+    { "id": "random-tick", "query": "随机刻", "expect": ["随机刻"], "max_rank": 1,
+      "note": "_Drafts/ChunkMechanics/09-随机刻与方块实体刻.zh.md" },
+    { "id": "light-suppression", "query": "光照抑制", "expect": ["光照抑制"], "max_rank": 1,
+      "note": "_Drafts/ChunkMechanics/20-光照抑制现象.zh.md" },
+    { "id": "chunk-swap", "query": "区块互换", "expect": ["区块互换现象"], "max_rank": 2,
+      "note": "实测：专属条目排第 2，第 1 名是《区块存储管理器》的卸载小节（正文高频「区块」× 文件级聚合取胜，其正文并无「区块互换」）——top-2 内可接受" },
+    { "id": "tree-farm", "query": "树场", "expect": ["TreeFarm/"], "max_rank": 3,
+      "note": "_Drafts/TreeFarm/ 整个主题（README 或入门篇排前即可）" },
+    { "id": "rail", "query": "铁轨", "expect": ["InstantComponents/铁轨"], "max_rank": 1,
+      "note": "InstantComponents/铁轨.zh.md" },
+    { "id": "in-tick-timing", "query": "刻内时序", "expect": ["初窥刻内时序"], "max_rank": 1,
+      "note": "MicroTiming/初窥刻内时序.zh.md" }
+  ]
+}

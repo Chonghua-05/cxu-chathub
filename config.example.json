@@ -51,6 +51,10 @@
       "model": "",
       "max_answer_chars": 1000
     },
+    "routing": {
+      "enabled": false,
+      "group_ids": []
+    },
     "skills": [
       {
         "name": "mc",
@@ -78,6 +82,13 @@
         "description": "RMS 服务器文档（云端 RMS-Docs，自动下载缓存）",
         "sources": [
           {"type": "repo", "repo": "Conflux-Union/RMS-Docs", "branch": "master", "subdir": "", "site_url": "https://docs.rms.net.cn", "name": "rms-docs"}
+        ]
+      },
+      {
+        "name": "docs",
+        "description": "Minecraft 系统机制文档（英文，minecraftdocs.dev，云端自动下载缓存）",
+        "sources": [
+          {"type": "repo", "repo": "AlexanderjFraser/MinecraftDocs", "branch": "main", "subdir": "src", "site_url": "https://minecraftdocs.dev", "extensions": [".md"], "exclude": ["summary.md", "reference/class-index"], "name": "minecraftdocs"}
         ]
       },
       {

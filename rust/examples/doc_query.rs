@@ -1,5 +1,5 @@
 //! 语料检索调试工具：对任意本地目录跑 LocalDocSource 检索，打印命中与出处。
-//! 用途：接入真实语料前的质量评测（agent-design.md §6 里程碑）。
+//! 用途：单条查询的检索调试；批量评测（固定问题集 + 通过率/MRR）用 eval_retrieval。
 //!
 //! 用法：cargo run --release --example doc_query -- <语料目录> <查询词> [扩展名白名单，如 ".java,.md"]
 

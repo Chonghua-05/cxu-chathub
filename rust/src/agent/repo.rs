@@ -63,6 +63,8 @@ pub struct RepoSource {
     site_url: Option<String>,
     /// 索引扩展名白名单（后缀匹配，支持 `.zh.md` 这类双后缀）；空 = [`DOC_EXTENSIONS`]。
     extensions: Vec<String>,
+    /// 路径排除子串（转发给内层 [`LocalDocSource`]，如 mdBook 的 SUMMARY.md / 类名索引页）。
+    excludes: Vec<String>,
     /// tarball 解压缓存目录。
     cache_dir: PathBuf,
     /// 下载客户端（总超时 [`DOWNLOAD_TIMEOUT`]）。
@@ -97,11 +99,19 @@ impl RepoSource {
             subdir: (!subdir.is_empty()).then_some(subdir),
             site_url: (!site_url.is_empty()).then_some(site_url),
             extensions,
+            excludes: Vec::new(),
             cache_dir: cache_root.into().join(repo_slug(&repo)),
             client,
             repo,
             inner: OnceCell::new(),
         })
+    }
+
+    /// 追加路径排除子串（转发给内层检索器）：相对路径含任一子串的文件不进索引，
+    /// 用于索引页/目录页这类检索噪声。
+    pub fn with_excludes(mut self, excludes: Vec<String>) -> Self {
+        self.excludes = excludes;
+        self
     }
 
     /// tarball 下载地址：repo 本身是 URL 时原样使用；否则拼 codeload 分支地址。
@@ -236,6 +246,7 @@ impl RepoSource {
             self.extensions.clone()
         };
         LocalDocSource::new(self.name.as_str(), root, extensions)
+            .with_excludes(self.excludes.clone())
     }
 
     /// 把内层 [`LocalDocSource`] 的 `"{rel}:{start}-{end}"` 出处映射为可访问的

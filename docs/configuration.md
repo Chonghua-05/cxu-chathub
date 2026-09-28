@@ -72,6 +72,7 @@
 |------|------|------|------|
 | `enabled` | bool | `false` | agent 技能总开关 |
 | `llm` | object / null | `null` | OpenAI 兼容 `/chat/completions`：`api_url` / `api_key` / `model` / `timeout_secs`(30) / `max_answer_chars`(1000) / `system_prompt`。未配置或调用失败时自动降级为纯检索摘录 |
+| `routing` | object | 关 | 智能路由（灰度）：`enabled`（默认 false）+ `group_ids`（灰度群白名单，空 = 不生效）——白名单群里不带命令前缀的自然语言消息由 LLM 路由到技能；见 [`agent-design.md`](agent-design.md) §4 |
 | `skills[]` | list | `[]` | 命令声明：`name`（如 "mc"）、`trigger`（默认 `!{name}`）、`description`、`max_results`(5)、`sources[]` |
 | `skills[].sources[]` | list | 必填 | 三种类型见下表；可多个，结果合并并标注来源 |
 
@@ -79,16 +80,22 @@
 
 | `type` | 字段 | 说明 |
 |--------|------|------|
-| `local` | `root`（目录）、`extensions`（白名单，空=内置默认集）、`name` | 本地目录检索；md 按标题分节、代码按行窗分块，IDF+路径分词+文件级聚合；出处=`文件:行号区间` |
+| `local` | `root`（目录）、`extensions`（白名单，空=内置默认集）、`exclude`（路径排除子串）、`name` | 本地目录检索；md 按标题分节、代码按行窗分块，IDF+路径分词+文件级聚合；出处=`文件:行号区间` |
 | `mediawiki` | `api_url`（…/api.php）、`name` | MediaWiki 站点两步查询；出处=条目 URL |
-| `repo` | `repo`（"owner/name" 或完整 tarball URL）、`branch`(main)、`subdir`（如 mdBook 的 "src"）、`site_url`（出处映射，如 https://minecraftdocs.dev ）、`name` | GitHub 仓库文档：tarball 下载到系统临时目录缓存（24h 刷新，失败回退旧缓存），委托本地检索；出处=站点页面 URL |
+| `repo` | `repo`（"owner/name" 或完整 tarball URL）、`branch`(main)、`subdir`（如 mdBook 的 "src"）、`site_url`（出处映射，如 https://minecraftdocs.dev ）、`extensions`（后缀白名单）、`exclude`（路径排除子串）、`name` | GitHub 仓库文档：tarball 下载到系统临时目录缓存（24h 刷新，失败回退旧缓存），委托本地检索；出处=站点页面 URL |
+
+`exclude`：相对路径（小写化）包含任一子串的文件不进索引，用于索引页/目录页这类
+「什么查询都命中但永远不是答案」的检索噪声（如 mdBook 的 `SUMMARY.md`、全站类名索引页）。
 
 中文问题对英文语料的检索：配置了 `llm` 时自动把问题翻译成英文关键词（MC 术语用官方
 英文名），原文与译文各查一遍按出处去重合并；无 LLM 时只用原文查询。
 
-示例：`!mc` 接本地 MC 源码副本、`!wiki` 接 zh.minecraft.wiki、`!tmc` 同时接本地
-techmc 文档与云端站点、`!docs` 接云端 MinecraftDocs——见 `config.example.json` 的
-`agent` 段。检索质量调试工具：`cargo run --release --example doc_query -- <目录> <查询词> [扩展名]`。
+示例：`!mc` 接本地 MC 源码副本、`!aimc` 接源码释读文档、`!tmc` 接 GTMC 文章库、
+`!doc` 接 RMS-Docs、`!docs` 接云端 MinecraftDocs（英文语料，检索用英文关键词）、
+`!wiki` 接 zh.minecraft.wiki——见 `config.example.json` 的 `agent` 段。
+检索质量调试工具：`cargo run --release --example doc_query -- <目录> <查询词> [扩展名]`；
+批量评测：`cargo run --release --example eval_retrieval -- rust/eval/<问题集>.json`（见
+[`agent-design.md`](agent-design.md) §7）。
 
 ## 顶层
 

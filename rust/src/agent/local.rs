@@ -78,6 +78,10 @@ pub struct LocalDocSource {
     name: String,
     root: PathBuf,
     extensions: Vec<String>,
+    /// 路径排除子串（小写化）：rel_path 含任一即不索引——索引页/目录页这类
+    /// 「什么查询都命中但永远不是答案」的纯噪声页（如 mdBook 的 SUMMARY.md、
+    /// 全站类名索引），靠打分压不住，配置排除是标准做法。
+    excludes: Vec<String>,
     index: OnceCell<Index>,
 }
 
@@ -108,8 +112,20 @@ impl LocalDocSource {
             name: name.into(),
             root: root.into(),
             extensions,
+            excludes: Vec::new(),
             index: OnceCell::new(),
         }
+    }
+
+    /// 追加路径排除子串：相对路径（小写化）包含任一子串的文件不进索引。
+    /// 用于索引页/目录页这类检索噪声（如 mdBook 的 SUMMARY.md、全站类名索引）。
+    pub fn with_excludes(mut self, excludes: Vec<String>) -> Self {
+        self.excludes = excludes
+            .into_iter()
+            .map(|ex| ex.to_lowercase())
+            .filter(|ex| !ex.is_empty())
+            .collect();
+        self
     }
 }
 
@@ -130,8 +146,12 @@ impl DocumentSource for LocalDocSource {
             .get_or_init(|| {
                 let root = self.root.clone();
                 let extensions = self.extensions.clone();
+                let excludes = self.excludes.clone();
                 async move {
-                    match tokio::task::spawn_blocking(move || build_index(&root, &extensions)).await
+                    match tokio::task::spawn_blocking(move || {
+                        build_index(&root, &extensions, &excludes)
+                    })
+                    .await
                     {
                         Ok(index) => index,
                         Err(err) => {
@@ -231,7 +251,7 @@ fn read_snippet(root: &Path, chunk: &Chunk) -> String {
 }
 
 /// 建索引入口：根目录缺失 / 非目录时 warn 一次并返回空索引。
-fn build_index(root: &Path, extensions: &[String]) -> Index {
+fn build_index(root: &Path, extensions: &[String], excludes: &[String]) -> Index {
     if !root.is_dir() {
         warn!(
             root = %root.display(),
@@ -241,7 +261,7 @@ fn build_index(root: &Path, extensions: &[String]) -> Index {
     }
     let mut files = 0usize;
     let mut chunks = Vec::new();
-    walk_dir(root, "", extensions, &mut chunks, &mut files);
+    walk_dir(root, "", extensions, excludes, &mut chunks, &mut files);
     info!(
         files,
         chunks = chunks.len(),
@@ -258,11 +278,13 @@ fn build_index(root: &Path, extensions: &[String]) -> Index {
     Index { chunks, df }
 }
 
-/// 递归遍历目录：跳过隐藏项（`.` 前缀）、`target`/`node_modules`/`.git` 与符号链接。
+/// 递归遍历目录：跳过隐藏项（`.` 前缀）、`target`/`node_modules`/`.git`、
+/// 命中 exclude 子串的文件，以及符号链接。
 fn walk_dir(
     dir: &Path,
     rel_prefix: &str,
     extensions: &[String],
+    excludes: &[String],
     chunks: &mut Vec<Chunk>,
     files: &mut usize,
 ) {
@@ -285,9 +307,9 @@ fn walk_dir(
             if SKIPPED_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            walk_dir(&entry.path(), &child_rel, extensions, chunks, files);
+            walk_dir(&entry.path(), &child_rel, extensions, excludes, chunks, files);
         } else if file_type.is_file() {
-            index_file(&entry.path(), &child_rel, &name, extensions, chunks, files);
+            index_file(&entry.path(), &child_rel, &name, extensions, excludes, chunks, files);
         }
         // 符号链接等其它类型：跳过（防环路，避免重复计数）
     }
@@ -301,15 +323,20 @@ fn join_rel(prefix: &str, name: &str) -> String {
     }
 }
 
-/// 索引单个文件：扩展名白名单 + 20MB 上限 + UTF-8 校验，然后按类型分块。
+/// 索引单个文件：扩展名白名单 + exclude 子串 + 20MB 上限 + UTF-8 校验，然后按类型分块。
 fn index_file(
     path: &Path,
     rel_path: &str,
     file_name: &str,
     extensions: &[String],
+    excludes: &[String],
     chunks: &mut Vec<Chunk>,
     files: &mut usize,
 ) {
+    let rel_lower = rel_path.to_lowercase();
+    if excludes.iter().any(|ex| rel_lower.contains(ex)) {
+        return; // 路径排除命中：索引页/目录页等纯噪声
+    }
     let lower = file_name.to_ascii_lowercase();
     if !extensions.iter().any(|ext| lower.ends_with(ext.as_str())) {
         return; // 不在扩展名白名单内
@@ -429,13 +456,22 @@ pub(crate) fn is_cjk(ch: char) -> bool {
 /// 路径词在 tf 里的固定计数：文件名/目录名是代码检索的最强信号之一。
 const PATH_TOKEN_WEIGHT: usize = 8;
 
-/// 路径分词：按非字母数字切段后做 camelCase 拆分并小写化。
+/// 路径分词：按非字母数字切段后做 camelCase 拆分并小写化；含 CJK 的段再按正文
+/// 同款规则拆重叠二元组——否则路径里的「区块互换现象」是整串 token，
+/// 「区块互换」的二元组查询撞不上路径权重（ASCII 段如 NaturalSpawner 不受影响）。
 /// `src/main/java/net/minecraft/world/level/NaturalSpawner.java`
 ///   → [src, main, java, net, minecraft, world, level, natural, spawner]
 fn tokenize_path(rel_path: &str) -> Vec<String> {
     rel_path
         .split(|c: char| !c.is_ascii_alphanumeric())
         .flat_map(split_camel)
+        .flat_map(|word| {
+            if word.chars().any(is_cjk) {
+                tokenize(&word)
+            } else {
+                vec![word]
+            }
+        })
         .filter(|word| !word.is_empty())
         .collect()
 }
@@ -618,6 +654,37 @@ mod tests {
         assert_eq!(hits[0].locator, "guide.md:1-3"); // 标题加成的最高分优先
 
         assert!(source.search("完全不存在的词汇", 10).await.is_empty());
+    }
+
+    /// 路径排除：命中子串的文件不进索引，其余正常检索（索引页/目录页噪声的通用解法）。
+    #[tokio::test]
+    async fn local_source_exclude_skips_matching_paths() {
+        let (_dir, root) = fixture();
+        let source = LocalDocSource::new("docs", &root, vec![".md".into(), ".java".into()])
+            .with_excludes(vec!["guide.md".into()]);
+        let hits = source.search("活塞", 10).await;
+        assert!(
+            hits.iter().all(|h| !h.locator.contains("guide.md")),
+            "排除文件不应命中: {:?}",
+            hits.iter().map(|h| &h.locator).collect::<Vec<_>>()
+        );
+        assert!(!hits.is_empty()); // PistonBlock.java 注释仍命中
+    }
+
+    /// CJK 路径段拆二元组：文件名含主题词的专属文件要赢过正文提到该词更多次的
+    /// 普通文件（路径权重 ×8 参与打分）。正文分词拆 CJK 二元组，路径分词必须
+    /// 同规则，否则「方块事件.zh.md」的文件名对「方块事件」查询完全无感。
+    #[tokio::test]
+    async fn local_source_cjk_path_bigrams_rank_dedicated_file_first() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        std::fs::create_dir_all(root.join("notes")).unwrap();
+        std::fs::write(root.join("notes/杂项.zh.md"), "方块事件 方块事件 方块事件\n").unwrap();
+        std::fs::write(root.join("notes/方块事件.zh.md"), "方块事件\n").unwrap();
+        let source = LocalDocSource::new("docs", &root, vec![".md".into()]);
+        let hits = source.search("方块事件", 10).await;
+
+        assert_eq!(hits.first().map(|h| h.title.as_str()), Some("方块事件.zh.md"));
     }
 
     /// 根目录不存在：不 panic，返回空列表（索引保持为空，重启前不会重扫）。

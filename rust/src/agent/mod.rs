@@ -22,10 +22,12 @@ use tracing::warn;
 
 use crate::config::{AgentConfig, SourceConfig};
 
+pub mod eval;
 pub mod http;
 pub mod local;
 pub mod llm;
 pub mod repo;
+pub mod routing;
 pub mod skill;
 
 use self::http::MediaWikiSource;
@@ -105,14 +107,17 @@ pub fn build_skills(agent: &AgentConfig) -> Vec<DocQuerySkill> {
 }
 
 /// 单条数据源声明 → 具体实现。name 缺省时用类型名兜底（命中结果要标注来源）。
-fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, String> {
+/// pub：检索质量评测（`agent::eval` / `examples/eval_retrieval`）复用同一条建源路径。
+pub fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, String> {
     match cfg {
-        SourceConfig::Local { root, extensions, name } => {
+        SourceConfig::Local { root, extensions, exclude, name } => {
             if root.is_empty() {
                 return Err("root 为空".into());
             }
             let name = if name.is_empty() { "local" } else { name };
-            Ok(Arc::new(LocalDocSource::new(name, root, extensions.clone())))
+            Ok(Arc::new(
+                LocalDocSource::new(name, root, extensions.clone()).with_excludes(exclude.clone()),
+            ))
         }
         SourceConfig::Mediawiki { api_url, name } => {
             if api_url.is_empty() {
@@ -129,6 +134,7 @@ fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, String> {
             subdir,
             site_url,
             extensions,
+            exclude,
             name,
         } => {
             if repo.is_empty() {
@@ -147,6 +153,7 @@ fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, String> {
                 extensions.clone(),
                 cache_root,
             )
+            .map(|source| source.with_excludes(exclude.clone()))
             .map(|source| Arc::new(source) as Arc<dyn DocumentSource>)
             .map_err(|err| err.to_string())
         }

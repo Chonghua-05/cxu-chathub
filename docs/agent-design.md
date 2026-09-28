@@ -16,7 +16,7 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
 
 一个命令 = `config.json` 里 `agent.skills` 的一条声明（名字、触发前缀、任意多个数据源）。
 **新增 `!xxx` 命令 = 改一行配置重启，零代码。** 触发约定：全部走**显式命令强制触发**
-（`!mc` / `!aimc` / `!wiki` / `!tmc` / `!doc`），不做任何自动/意图路由——那是智能路由
+（`!mc` / `!aimc` / `!wiki` / `!tmc` / `!doc` / `!docs`），不做任何自动/意图路由——那是智能路由
 阶段的事。命令语义一一对应、不混源：`!mc` 只查源码，`!wiki` 只查 Wiki。
 
 ```json
@@ -32,6 +32,9 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
                                     "site_url": "", "extensions": [".zh.md", ".md"]} ] },
     { "name": "doc",  "sources": [ {"type": "repo", "repo": "Conflux-Union/RMS-Docs", "branch": "master",
                                     "site_url": "https://docs.rms.net.cn"} ] },
+    { "name": "docs", "sources": [ {"type": "repo", "repo": "AlexanderjFraser/MinecraftDocs", "branch": "main",
+                                    "subdir": "src", "site_url": "https://minecraftdocs.dev",
+                                    "extensions": [".md"], "exclude": ["summary.md", "reference/class-index"]} ] },
     { "name": "wiki", "sources": [ {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php"} ] }
   ]
 }
@@ -41,7 +44,8 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
   `site_url` 留空 → 出处用 GitHub blob 文件地址（保留完整路径）；`extensions`
   用后缀匹配，可写 `.zh.md` 只收中文版（默认全收）。
 - 命令语义一一对应（**不混源**）：`!mc` 只查源码、`!wiki` 只查 Wiki、`!aimc` 只查
-  源码释读文档（语料就位即生效，目录缺失时检索返回空并告警）。
+  源码释读文档（语料就位即生效，目录缺失时检索返回空并告警）、`!docs` 只查
+  MinecraftDocs 系统机制文档（英文语料，检索用英文关键词）。
 
 - 多源合并：结果按源交错、标注来源名、总量 ≤ `max_results`。
 - 单个源无效（如目录不存在）只跳过该源；全部无效则该技能不注册。
@@ -71,13 +75,32 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
 命中格式中的出处：本地源 `redstone.md:1-3`（文件:行号区间），云端源
 `https://zh.minecraft.wiki/wiki/活塞`（URL）——满足 roadmap「回答必须带出处」的要求。
 
-## 4. 智能路由预留（下一迭代）
+## 4. 智能路由（灰度，已实现）
 
-- `/api/status` 的 `capabilities` 字段实时枚举所有已注册命令（含配置注册的技能），
-  人、Web UI、LLM 路由器共用同一份能力发现。
-- 未来在 `CommandRouter::dispatch` 前置 LLM 路由器：读取各 handler 的
-  `CommandInfo` 元数据（name/trigger/description），把**不带命令前缀的自然语言请求**
-  路由到最合适的技能。技能与检索层接口无需任何改动。
+`agent/routing.rs` 的 `LlmSkillRouter` 注册在 `CommandRouter` **最末**：只有显式命令
+全部不认领的消息才进入路由，任何显式命令行为都不受影响。
+
+- **决策**：一次小 LLM 调用（system = 路由提示词 + 技能清单，清单来自各 handler 的
+  `CommandInfo` 元数据——与 `/api/status` 的 `capabilities` 共用同一份能力发现），
+  只回技能名或 `NONE`。解析只认**裸技能名**（第一行、大小写不敏感、容忍 `!` 前缀）；
+  `NONE` / 空 / 超长 / 认不出的输出一律不路由——**宁可错过，不可错路由**。
+- **命中**：合成 `{trigger} {原文}` 交给技能 handler，完整复用技能的检索、查询翻译、
+  回答链路；消息被消费（与显式命令一致，不进转发流水线）。
+- **拒绝 / 失败 / 超时**：返回 false 不消费，消息照常进转发流水线，对群友零感知。
+  决策调用有独立 10s 短超时——OneBot 事件消费者是顺序处理，决策卡多久群消息就停多久，
+  不能沿用 LLM 总超时（30s）。
+- **灰度门控**（全部满足才生效）：`agent.routing.enabled = true` + `agent.llm` 已配置 +
+  消息来自 `agent.routing.group_ids` 白名单群 + 消息非命令形态（`!` / `/` 开头不路由）。
+  游戏 / chatroom 端暂不开放（每条玩家消息都会打 LLM，成本不可控），按灰度结果再议。
+- **配置**（默认全关；`group_ids` 为空视为未启用）：
+
+```json
+"agent": { "enabled": true, "llm": { ... },
+           "routing": { "enabled": false, "group_ids": [] }, "skills": [ ... ] }
+```
+
+真实验证（LLM 接入后，测试群进行）：白名单群发「活塞怎么防冲水」应路由到 `!mc`
+并带回出处的回答；闲聊消息应照常同步 chatroom、不触发回答。
 
 ## 5. 边界（沿用 roadmap 非目标）
 
@@ -96,5 +119,39 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
       `guardian spawn water` → Guardian.java 排第一）；MinecraftDocs 云端接入
       （"mob spawning" → mob tick / entity lifecycle / mob caps 等页面，出处映射 minecraftdocs.dev）
 - [x] 检索质量调试工具：`cargo run --release --example doc_query -- <目录> <查询词> [扩展名]`
-- [ ] 检索质量评测常态化：固定抽样问题集核对带出处的准确率，不达标先调分块与评分
+- [x] 检索质量评测常态化：固定抽样问题集核对带出处的准确率（见下方 §7）
 - [ ] LLM 智能路由灰度（自然语言 → 技能选择）
+
+## 7. 检索质量评测（常态化）
+
+固定抽样问题集 + 通过率/MRR 统计，评测对象是**检索层**（`DocumentSource::search`，
+与线上技能同一条路径、不含 LLM 翻译层，离线可复现）。实现：`agent/eval.rs`（评测核心，
+带单测）+ 运行器 `examples/eval_retrieval.rs`；问题集在 `rust/eval/*.json`，
+`corpus` 段与 `agent.skills[].sources[]` 完全同构（建源走同一 `build_source`）。
+
+```bash
+cargo run --release --example eval_retrieval -- rust/eval/gtmc-articles.json
+cargo run --release --example eval_retrieval -- rust/eval/mc-source.json --root <源码目录>
+cargo run --release --example eval_retrieval -- rust/eval/minecraftdocs.json --llm <config.json>
+```
+
+- 用例两种形态：`query`（关键词，确定性基线，始终执行）与 `question`（自然语言，
+  如中文问句——需 `--llm` 提供 LLM，按技能层同款流程翻译成英文关键词后双语检索；
+  无 LLM 时记 **SKIP** 不计入通过率）。期望 = `expect`（出处子串 any-of，对
+  locator+标题匹配、percent 解码）+ `max_rank`；指标 = 通过率 + MRR；通过率低于
+  `--min-rate`（默认 1.0）时退出码 1，可作常态化门禁。`--llm` 的配置文件认
+  应用 config.json（agent.llm 段）、`{"llm":{...}}` 或裸 LlmConfig 三种形态。
+- 五份问题集（2026-09-28 联网实测）：`gtmc-articles` 11/11（MRR 0.909）、
+  `minecraftdocs` 11/11 关键词题 + 3 道 nl 题待 `--llm`（MRR 1.000）、
+  `rms-docs` 7/7（MRR 1.000）、`mc-wiki` 8/8（MRR 1.000）；`mc-source` 待语料就位后
+  首轮运行核对期望（前两题为 4c0342f 实测锚点，其余按官方映射类名出题）。
+- 实测结论（调分块与评分的依据）：
+  - 路径 CJK 段必须与正文同规则拆二元组（`tokenize_path`），否则中文文件名对
+    中文查询完全无感（已修，带回归测试）；
+  - 文件级聚合会让「高频词 × 大文件多节」压过专属条目（「区块互换」→《区块存储管理器》
+    第 1，其正文并无该词）——专属条目类期望放宽 top-2 是合理校准；
+  - 索引页/目录页（如 mdBook 的 SUMMARY.md、全站类名索引）什么查询都命中但永远
+    不是答案，靠打分压不住——新增 `exclude` 路径排除配置（local/repo 源通用）；
+  - 分词无词干还原：英文语料注意单复数（「block entity」查不中，「block entities」
+    目标页第 1）；中文语料检索用单词关键词：双词会被高频词稀释（「实体 碰撞」
+    目标排第 4，「碰撞」排第 1）。

@@ -232,70 +232,50 @@ impl StatusRenderer {
         }
     }
 
+    /// 渲染：复用常驻 Chromium（浏览器冷启动 2-4 秒，每次命令都重启会让 `/server` 端到端慢到 ~9 秒）。
+    /// 同一条 tab 反复使用，每次渲染前导航回 about:blank；tab 失效（浏览器崩溃/被回收）时重建后重试一次。
     #[cfg(feature = "status-image")]
     pub async fn render(&self, data: &Value) -> Result<Vec<u8>, RenderError> {
-        use headless_chrome::protocol::cdp::{Emulation, Page};
-        use headless_chrome::{Browser, LaunchOptionsBuilder};
-
+        let background_started = std::time::Instant::now();
         // Python：背景图懒加载（PIL 重编码 JPEG q=60 → base64），失败用渐变兜底
         let background = load_background();
+        let background_ms = background_started.elapsed().as_millis();
         let html = build_status_html(data, background.as_deref(), self.addresses.as_deref());
-
-        // 定位浏览器；找不到即失败（上层回退文本）
-        let path = find_chrome().ok_or(RenderError::ChromeNotFound)?;
-
-        let options = LaunchOptionsBuilder::default()
-            .headless(true)
-            .sandbox(false) // 进程内等价追加 --no-sandbox（对应 Python 启动参数）
-            .window_size(Some((self.width, self.height)))
-            .path(Some(path))
-            .args(vec![std::ffi::OsStr::new("--disable-dev-shm-usage")])
-            .build()
-            .map_err(chrome_err)?;
-        let browser = Browser::new(options).map_err(chrome_err)?;
-        let tab = browser.new_tab().map_err(chrome_err)?;
-        tab.navigate_to("about:blank").map_err(chrome_err)?;
-        tab.wait_until_navigated().map_err(chrome_err)?;
-
-        // crate 没有 set_content 辅助：向 about:blank 写入文档（JSON 字符串即合法 JS 字面量）
         let script = format!(
             "document.open();document.write({});document.close();",
             serde_json::to_string(&html).map_err(|err| RenderError::Serialize(err.to_string()))?
         );
-        tab.evaluate(&script, false).map_err(chrome_err)?;
+        let size = (self.width, self.height);
+        // 定位浏览器；找不到即失败（上层回退文本）
+        let path = find_chrome().ok_or(RenderError::ChromeNotFound)?;
 
-        // 主路径（对应 Playwright）：量取 body 包围盒 → 视口贴合其尺寸 → 截整页；
-        // 量取 / 视口覆盖失败则退化为直接按 body 元素（box-model 裁剪）截图。
-        let fitted = tab.find_element("body").and_then(|body| {
-            let model = body.get_box_model()?;
-            let width = model.width.round().clamp(1.0, 20000.0) as u32;
-            let height = model.height.round().clamp(1.0, 20000.0) as u32;
-            tab.call_method(Emulation::SetDeviceMetricsOverride {
-                width,
-                height,
-                device_scale_factor: 1.0,
-                mobile: false,
-                scale: None,
-                screen_width: None,
-                screen_height: None,
-                position_x: None,
-                position_y: None,
-                dont_set_visible_size: None,
-                screen_orientation: None,
-                viewport: None,
-                display_feature: None,
-                device_posture: None,
-            })?;
-            Ok(())
-        });
+        let render_started = std::time::Instant::now();
+        let mut slot = browser_pool::lock();
+        let size_changed = slot
+            .as_ref()
+            .is_some_and(|pooled| (pooled.width, pooled.height) != size);
+        if slot.is_none() || size_changed {
+            *slot = Some(browser_pool::launch(&path, size)?);
+        }
 
-        let png = match fitted {
-            Ok(()) => tab.capture_screenshot(Page::CaptureScreenshotFormatOption::Png, None, None, true),
-            Err(_) => tab
-                .find_element("body")
-                .and_then(|body| body.capture_screenshot(Page::CaptureScreenshotFormatOption::Png)),
+        let rendered = {
+            let pooled = slot.as_ref().expect("浏览器已启动");
+            shoot_status(&pooled.tab, &script)
         };
-        png.map_err(chrome_err)
+        let result = match rendered {
+            Ok(png) => Ok(png),
+            Err(err) => {
+                tracing::warn!("状态图渲染失败，重建 Chromium 后重试一次: {err}");
+                *slot = Some(browser_pool::launch(&path, size)?);
+                let pooled = slot.as_ref().expect("浏览器已重建");
+                shoot_status(&pooled.tab, &script)
+            }
+        };
+        tracing::info!(
+            "状态图耗时: 背景预处理 {background_ms}ms | 渲染(含截图) {}ms",
+            render_started.elapsed().as_millis()
+        );
+        result
     }
 
     #[cfg(not(feature = "status-image"))]
@@ -303,6 +283,119 @@ impl StatusRenderer {
         // 编译期降级：恒返回 Unsupported，上层据此回退文本
         Err(RenderError::Unsupported("status-image feature 未启用"))
     }
+}
+
+/// 常驻 Chromium 实例：`/server`、`/status` 每次都重启浏览器的话，冷启动就要 2-4 秒，
+/// 所以启动一次后复用；渲染本身是阻塞调用，用互斥锁把并发请求串行化。
+#[cfg(feature = "status-image")]
+mod browser_pool {
+    use std::path::Path;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::time::Duration;
+
+    use headless_chrome::{Browser, LaunchOptionsBuilder, Tab};
+    use std::sync::Arc;
+
+    use super::{chrome_err, RenderError};
+
+    pub(super) struct PooledBrowser {
+        /// 只用于持有浏览器句柄（drop 即杀 Chromium 进程），本身不被读取
+        #[allow(dead_code)]
+        pub(super) browser: Browser,
+        pub(super) tab: Arc<Tab>,
+        pub(super) width: u32,
+        pub(super) height: u32,
+    }
+
+    static POOL: OnceLock<Mutex<Option<PooledBrowser>>> = OnceLock::new();
+
+    /// 全局唯一槽位（毒化锁按未毒化处理：渲染失败不该让后续请求全部失败）。
+    pub(super) fn lock() -> MutexGuard<'static, Option<PooledBrowser>> {
+        POOL.get_or_init(|| Mutex::new(None))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// 启动 Chromium 并开一条常驻 tab。
+    pub(super) fn launch(path: &Path, size: (u32, u32)) -> Result<PooledBrowser, RenderError> {
+        let options = LaunchOptionsBuilder::default()
+            .headless(true)
+            .sandbox(false) // 进程内等价追加 --no-sandbox（对应 Python 启动参数）
+            .window_size(Some(size))
+            .path(Some(path.to_path_buf()))
+            .args(vec![std::ffi::OsStr::new("--disable-dev-shm-usage")])
+            // 默认 30 秒空闲就回收浏览器，会让复用形同虚设；放宽到 10 分钟
+            .idle_browser_timeout(Duration::from_secs(600))
+            .build()
+            .map_err(chrome_err)?;
+        let browser = Browser::new(options).map_err(chrome_err)?;
+        let tab = browser.new_tab().map_err(chrome_err)?;
+        Ok(PooledBrowser {
+            browser,
+            tab,
+            width: size.0,
+            height: size.1,
+        })
+    }
+}
+
+/// 在给定 tab 上渲染一页：导航回 about:blank → 写入 HTML → 量取 body 尺寸 → 截整页。
+///
+/// 主路径（对应 Playwright）：量取 body 包围盒 → 视口贴合其尺寸 → 截整页；
+/// 量取 / 视口覆盖失败则退化为直接按 body 元素（box-model 裁剪）截图。
+#[cfg(feature = "status-image")]
+fn shoot_status(tab: &headless_chrome::Tab, script: &str) -> Result<Vec<u8>, RenderError> {
+    use headless_chrome::protocol::cdp::{Emulation, Page};
+    use std::time::Instant;
+
+    let started = Instant::now();
+    // 不需要每次导航回 about:blank：document.open() 本身会清空并重置当前文档，
+    // 而 CDP 往返的导航/等待要花 ~0.7 秒。
+    let navigated = started.elapsed();
+
+    // crate 没有 set_content 辅助：向 about:blank 写入文档（JSON 字符串即合法 JS 字面量）
+    tab.evaluate(script, false).map_err(chrome_err)?;
+    let written = started.elapsed();
+
+    let fitted = tab.find_element("body").and_then(|body| {
+        let model = body.get_box_model()?;
+        let width = model.width.round().clamp(1.0, 20000.0) as u32;
+        let height = model.height.round().clamp(1.0, 20000.0) as u32;
+        tab.call_method(Emulation::SetDeviceMetricsOverride {
+            width,
+            height,
+            device_scale_factor: 1.0,
+            mobile: false,
+            scale: None,
+            screen_width: None,
+            screen_height: None,
+            position_x: None,
+            position_y: None,
+            dont_set_visible_size: None,
+            screen_orientation: None,
+            viewport: None,
+            display_feature: None,
+            device_posture: None,
+        })?;
+        Ok(())
+    });
+    let measured = started.elapsed();
+
+    let png = match fitted {
+        Ok(()) => tab.capture_screenshot(Page::CaptureScreenshotFormatOption::Png, None, None, true),
+        Err(_) => tab
+            .find_element("body")
+            .and_then(|body| body.capture_screenshot(Page::CaptureScreenshotFormatOption::Png)),
+    };
+    let shot = started.elapsed();
+    tracing::info!(
+        "状态图渲染分段: 导航 {}ms | 写文档 {}ms | 量尺寸 {}ms | 截图含PNG编码 {}ms",
+        navigated.as_millis(),
+        (written - navigated).as_millis(),
+        (measured - written).as_millis(),
+        (shot - measured).as_millis()
+    );
+    png.map_err(chrome_err)
 }
 
 #[cfg(feature = "status-image")]
@@ -331,8 +424,16 @@ fn find_chrome() -> Option<std::path::PathBuf> {
 
 /// 对应 Python `_load_background`：解码内嵌 JPEG → RGB → quality=60 重编码 → base64。
 /// 失败返回 None（模板回退渐变背景）。
+///
+/// 结果只算一次（背景图是编译期内嵌的常量，重编码约 240ms）。
 #[cfg(feature = "status-image")]
 fn load_background() -> Option<String> {
+    static CACHE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(encode_background).clone()
+}
+
+#[cfg(feature = "status-image")]
+fn encode_background() -> Option<String> {
     use base64::Engine as _;
 
     let image = image::load_from_memory(BACKGROUND_JPG).ok()?;

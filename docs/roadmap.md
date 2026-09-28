@@ -10,6 +10,8 @@
 - [ ] **v0.3 剩余**：语料接入（把 MC 源码副本 / techmc wiki 导出放进配置目录并启用
       `agent.skills`）、检索质量评测（抽样问题集核对带出处准确率）、LLM 智能路由灰度。
 - [ ] **v0.4 服务化**：子服务边界拆分、配置热重载（SIGHUP）、结构化 JSON 日志、`/metrics`。
+- [ ] **v0.5（新功能）**：Mojang 版本更新播报 —— 自动抓官方更新说明 → LLM 翻译 →
+      「译后 / 译前截图 + 原文链接」打包成合并转发消息发群（详见下方 v0.5 节）。
 - [ ] **更远**：发布到包管理器、插件化。
 
 ## v0.1
@@ -60,6 +62,23 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
 - [ ] 统一配置加载与校验，支持热重载（先做「SIGHUP 重读」这一最小形态）
 - [ ] 结构化日志（JSON），便于以后接监控
 - [ ] `/metrics`（Prometheus 文本格式）：转发计数、失败计数、连接状态
+
+## v0.5 —— Mojang 版本更新播报（新功能，需求已定，未实现）
+
+目标：把 Minecraft（Java 版）新版本的官方更新说明自动播报到 QQ 群。
+
+- [ ] **数据源**：轮询 Mojang 官方 `https://launchercontent.mojang.com/javaPatchNotes.json`
+      （字段 title / type / version / image / body(HTML) / contentPath），检测到新版本即触发。
+      注：Mojang **无推送/订阅 API**，只能轮询；判断逻辑可与 `snapshot-updater`
+      （`Chonghua-05/snapshot-updater`，已在每 30 分钟拉版本清单）复用。
+- [ ] **翻译**：复用 cxu 已有的 LLM 配置，把正文译为中文。
+- [ ] **截图**：渲染两张长图——翻译后 / 翻译前（复用 `status_render` 的常驻 Chromium，HTML→PNG）。
+- [ ] **打包**：以「译后截图 + 译前截图 + 原文链接」组成一条**合并转发聊天记录**
+      （OneBot `send_group_forward_msg`，节点含图片与文本）。
+- [ ] **发送**：自动发到配置的 `group_ids` 白名单群。
+
+选型已定：翻译＝现有 LLM；目标群＝`group_ids` 白名单；触发＝轮询自动检测新版本。
+待定：是否需要手动命令（如 `/patch`）重新发送最近一期。
 
 ## 更远
 

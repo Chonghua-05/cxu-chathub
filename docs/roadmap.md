@@ -7,8 +7,6 @@
 
 > 按优先级排列。已完成/历史项见下方各版本清单。
 
-- [ ] **提交工作区改动**：`rust/src/services/status_render.rs`（状态图渲染性能优化）
-      已编译上线，但源码尚未 commit。
 - [ ] **v0.3 剩余**：语料接入（把 MC 源码副本 / techmc wiki 导出放进配置目录并启用
       `agent.skills`）、检索质量评测（抽样问题集核对带出处准确率）、LLM 智能路由灰度。
 - [ ] **v0.4 服务化**：子服务边界拆分、配置热重载（SIGHUP）、结构化 JSON 日志、`/metrics`。
@@ -38,8 +36,7 @@
 - [x] 架构预留：agent 能力扩展点固化（`router::CommandHandler` / `agent::DocumentSource`），
       设计见 [`docs/agent-design.md`](agent-design.md)，技能实现属 v0.3
 - [x] 性能优化：`/server` 状态图渲染改为常驻 Chromium 复用（+ 背景重编码缓存、
-      去掉多余导航），端到端 ~9s → ~1s 级；已随 2026-09-13 切流上线，
-      **源码尚未提交**（工作区脏，待 commit）
+      去掉多余导航），端到端 ~9s → ~1s 级；已随 2026-09-13 切流上线（源码 `d841d7b`）
 
 ## v0.3 —— Agent 能力（顺延，原 v0.2 项）
 

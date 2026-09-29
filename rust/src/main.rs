@@ -35,7 +35,7 @@ async fn run(config_path: &str) -> i32 {
             return 2;
         }
     };
-    setup_logging(&cfg.log_level);
+    setup_logging(&cfg.log_level, &cfg.log_format);
     info!("配置摘要: {}", describe(&cfg));
     if cfg.chatroom.forward_token.is_empty() {
         warn!("chatroom.forward_token 为空：QQ→chatroom 转发会被跳过，直到配置 token");
@@ -68,10 +68,16 @@ async fn run(config_path: &str) -> i32 {
     0
 }
 
-fn setup_logging(level: &str) {
+/// 日志初始化：级别取 `RUST_LOG` 环境变量（优先）或配置 `log_level`；
+/// 格式取配置 `log_format`——text（默认，人类可读）或 json（结构化，便于
+/// 接入日志采集 / 监控，见 docs/roadmap.md v0.4）。
+fn setup_logging(level: &str, format: &str) {
     use tracing_subscriber::EnvFilter;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    let _ = match format.eq_ignore_ascii_case("json") {
+        true => tracing_subscriber::fmt().json().with_env_filter(filter).try_init(),
+        false => tracing_subscriber::fmt().with_env_filter(filter).try_init(),
+    };
 }
 
 #[cfg(unix)]

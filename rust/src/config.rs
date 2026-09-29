@@ -323,6 +323,9 @@ pub struct AppConfig {
     pub state_path: String,
     #[serde(default = "default_log_level")]
     pub log_level: String,
+    /// 日志输出格式：text（默认）或 json（结构化，便于接入日志采集/监控）。
+    #[serde(default = "default_log_format")]
+    pub log_format: String,
 }
 
 fn default_state_path() -> String {
@@ -331,6 +334,10 @@ fn default_state_path() -> String {
 
 fn default_log_level() -> String {
     "INFO".into()
+}
+
+fn default_log_format() -> String {
+    "text".into()
 }
 
 impl Default for AppConfig {
@@ -344,6 +351,7 @@ impl Default for AppConfig {
             agent: AgentConfig::default(),
             state_path: default_state_path(),
             log_level: default_log_level(),
+            log_format: default_log_format(),
         }
     }
 }

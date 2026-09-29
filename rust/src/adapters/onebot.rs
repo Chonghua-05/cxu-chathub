@@ -114,6 +114,16 @@ impl GroupMessage {
             .to_string()
     }
 
+    /// 消息是否 @ 了指定 QQ（at 段的 `data.qq` 兼容数字与字符串两种形式）。
+    /// `target` 为 0（self_id 未知）时恒 false，避免误判。
+    pub fn at_qq(&self, target: i64) -> bool {
+        target != 0
+            && self
+                .segments
+                .iter()
+                .any(|seg| seg.kind == "at" && json_int(seg.data.get("qq")) == target)
+    }
+
     /// 第一个 reply 段的 `data["id"]`（Python: `str(value) if value else None`）。
     pub fn reply_message_id(&self) -> Option<String> {
         for seg in &self.segments {
@@ -830,6 +840,32 @@ mod tests {
                 { "type": "at", "data": { "qq": "10000" } },
             ],
         })
+    }
+
+    /// at_qq：字符串与数字形式的 at 段都识别；self_id 未知（0）时恒 false；
+    /// at 段不进 text()（trim 后即查询词）。
+    #[test]
+    fn group_message_at_qq_detection() {
+        let msg = parse_group_message(&raw_group_message()).unwrap();
+        assert!(msg.at_qq(10000)); // at 段 qq 为字符串 "10000"
+        assert!(!msg.at_qq(10001)); // @ 的是别人
+        assert!(!msg.at_qq(0)); // self_id 未知时不误判
+
+        let numeric = json!({
+            "post_type": "message",
+            "message_type": "group",
+            "group_id": 1,
+            "user_id": 2,
+            "message_id": 3,
+            "sender": {},
+            "message": [
+                { "type": "at", "data": { "qq": 10000 } },
+                { "type": "text", "data": { "text": " 问一下" } }
+            ],
+        });
+        let msg2 = parse_group_message(&numeric).unwrap();
+        assert!(msg2.at_qq(10000)); // 数字形式
+        assert_eq!(msg2.text(), "问一下");
     }
 
     #[test]

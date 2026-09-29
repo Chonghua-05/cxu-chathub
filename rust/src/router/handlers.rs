@@ -198,6 +198,7 @@ mod tests {
             group_id: 0,
             user_id: 0,
             display_name: author.into(),
+            at_me: false,
         }
     }
 
@@ -210,6 +211,7 @@ mod tests {
             group_id: 0,
             user_id: 0,
             display_name: username.into(),
+            at_me: false,
         }
     }
 
@@ -264,6 +266,7 @@ mod tests {
                 group_id: 1,
                 user_id: 2,
                 display_name: "u".into(),
+                at_me: false,
             }
         )
         .await);
@@ -313,6 +316,7 @@ mod tests {
             group_id: 1,
             user_id: 2,
             display_name: "u".into(),
+            at_me: false,
         };
         assert!(adapter.matches(&qq));
         let qq_unknown = InboundMessage {

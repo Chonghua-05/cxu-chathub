@@ -454,6 +454,7 @@ impl BridgeService {
             group_id: msg.group_id,
             user_id: msg.user_id,
             display_name: msg.display_name(),
+            at_me: msg.at_qq(conn.self_id()),
         };
         let ctx = DispatchCtx {
             hub: self.as_ref(),
@@ -527,6 +528,7 @@ impl BridgeService {
             group_id: 0,
             user_id: 0,
             display_name: username.clone(),
+            at_me: false,
         };
         let sink = ChatroomReplySink::new(&self.forward_api, &self.game_seq);
         let ctx = DispatchCtx {
@@ -575,6 +577,7 @@ impl BridgeService {
             group_id: 0,
             user_id: 0,
             display_name: nickname.to_string(),
+            at_me: false,
         };
         let sink = GameReplySink(self.chatbridge.clone());
         let ctx = DispatchCtx {

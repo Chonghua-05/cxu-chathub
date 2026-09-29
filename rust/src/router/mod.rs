@@ -33,6 +33,8 @@ pub struct InboundMessage {
     /// QQ 用户号；其他来源为 0
     pub user_id: i64,
     pub display_name: String,
+    /// QQ 端：消息是否 @ 了机器人（智能路由的触发条件；其他来源恒 false）
+    pub at_me: bool,
 }
 
 impl InboundMessage {

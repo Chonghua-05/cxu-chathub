@@ -1,12 +1,14 @@
-//! LLM 智能路由（灰度，roadmap v0.3 收尾项）：把**不带命令前缀**的自然语言
-//! 消息路由到合适的技能。
+//! LLM 智能路由（灰度，roadmap v0.3 收尾项）：把 **@ 机器人**的不带命令前缀的
+//! 自然语言消息路由到合适的技能。
 //!
 //! 注册位置在 [`crate::router::CommandRouter`] 的**最末**：只有显式命令全部
 //! 不认领的消息才会到这里，任何显式命令行为都不受影响。门控全部满足才启用：
 //!
+//! - 消息 **@ 了机器人**（`at_me`，NapCat at 段 × self_id）——成本护栏：
+//!   普通聊天零 LLM 开销，@ 了才进路由；
 //! - `agent.routing.enabled = true` 且 `agent.llm` 已配置；
 //! - 消息来自 `agent.routing.group_ids` 白名单内的 QQ 群（灰度范围；
-//!   游戏 / chatroom 端暂不开放——那边每条玩家消息都会打 LLM，成本不可控）；
+//!   游戏 / chatroom 端无 @ 语义，不参与路由）；
 //! - 消息不是命令形态（`!` / `/` 开头的是命令尝试，误路由只会白烧调用）。
 //!
 //! 决策：一次小 LLM 调用，只回技能名或 `NONE`。拒绝 / 失败 / 超时 / 未知输出
@@ -139,7 +141,9 @@ impl CommandHandler for LlmSkillRouter {
     }
 
     fn matches(&self, msg: &InboundMessage) -> bool {
-        if !matches!(msg.source, Source::QQ) || !self.group_ids.contains(&msg.group_id) {
+        // 成本护栏第一道：只有 @ 了机器人的消息才可能进路由（普通聊天零 LLM 开销）
+        if !msg.at_me || !matches!(msg.source, Source::QQ) || !self.group_ids.contains(&msg.group_id)
+        {
             return false;
         }
         let text = msg.text.trim();
@@ -163,6 +167,7 @@ impl CommandHandler for LlmSkillRouter {
             group_id: ctx.msg.group_id,
             user_id: ctx.msg.user_id,
             display_name: ctx.msg.display_name.clone(),
+            at_me: ctx.msg.at_me,
         };
         let routed_ctx = DispatchCtx {
             hub: ctx.hub,
@@ -233,6 +238,14 @@ mod tests {
             group_id,
             user_id: 2,
             display_name: "tester".into(),
+            at_me: true,
+        }
+    }
+
+    fn qq_plain_msg(group_id: i64, text: &str) -> InboundMessage {
+        InboundMessage {
+            at_me: false,
+            ..qq_msg(group_id, text)
         }
     }
 
@@ -360,13 +373,15 @@ mod tests {
         assert!(!no_routing.routing.enabled);
     }
 
-    /// matches 门控：仅白名单 QQ 群的非命令文本；`!` / `/` 开头与其它来源不路由。
+    /// matches 门控：仅白名单 QQ 群内 @ 机器人的非命令文本；未 @、`!` / `/`
+    /// 开头、其它来源都不路由。
     #[tokio::test]
     async fn router_matches_gates() {
         let router = router_for_test("http://unused", vec![100]);
 
         assert!(router.matches(&qq_msg(100, "活塞怎么防冲水")));
-        assert!(!router.matches(&qq_msg(200, "活塞怎么防冲水"))); // 非白名单群
+        assert!(!router.matches(&qq_plain_msg(100, "活塞怎么防冲水"))); // 未 @ 机器人
+        assert!(!router.matches(&qq_msg(200, "活塞怎么防冲水"))); // @ 了但非白名单群
         assert!(!router.matches(&qq_msg(100, "!mc 活塞"))); // 命令形态
         assert!(!router.matches(&qq_msg(100, "/server"))); // 斜杠命令
         assert!(!router.matches(&qq_msg(100, "  "))); // 空消息
@@ -376,7 +391,8 @@ mod tests {
             group_id: 0,
             user_id: 0,
             display_name: "bob".into(),
-        })); // 游戏来源不在灰度范围
+            at_me: false,
+        })); // 游戏来源不参与路由
     }
 
     /// 端到端：LLM 回技能名 → 合成 `{trigger} {原文}` 交给技能并消费；

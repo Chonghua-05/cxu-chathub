@@ -450,6 +450,7 @@ mod tests {
             group_id: 1,
             user_id: 2,
             display_name: "tester".into(),
+            at_me: false,
         }
     }
 
@@ -490,6 +491,7 @@ mod tests {
             group_id: 0,
             user_id: 0,
             display_name: "bob".into(),
+            at_me: false,
         }));
         assert!(s.matches(&InboundMessage {
             source: Source::Chatroom {
@@ -499,6 +501,7 @@ mod tests {
             group_id: 0,
             user_id: 0,
             display_name: "alice".into(),
+            at_me: false,
         }));
 
         let info = s.info();

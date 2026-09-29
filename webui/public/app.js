@@ -1,23 +1,21 @@
 // ============================================================
 // cxu-chathub 控制台 —— 前端逻辑（原生 JS）
-// 布局全部由 index.html 的表格承担；本文件只负责数据与渲染。
-// 配置表单：单列从上到下（label 150 右对齐 + 固定 size 输入框）。
-// 保存 = PUT 部分字段（本页分组），后端深合并。
+// 页面结构：单张 800px 表格；配置页按组合并（每组一次保存）。
+// 组保存 = PUT 该组全部字段（部分提交），后端深合并。
 // ============================================================
 
 'use strict';
 
-// ---------- 配置 schema：一个分组 = 导航的一页 ----------
-// size 缺省 25；宽字段（URL/正则/路径）用 45；数字 15
-const FIELD_GROUPS = {
-  onebot: { title: 'OneBot配置', fields: [
+// ---------- 配置分区：每个分区 = 一个 fieldset + 一张表 ----------
+const SECTIONS = {
+  onebot: { title: 'OneBot 配置 —— NapCat 反向 WS 接入', fields: [
     { k: 'listen_host', label: '监听地址', type: 'text', size: 25 },
     { k: 'listen_port', label: '监听端口', type: 'number', size: 15 },
     { k: 'path', label: 'WS 路径', type: 'text', size: 25 },
     { k: 'access_token', label: 'access_token', type: 'secret', size: 25 },
     { k: 'self_id', label: '机器人 QQ', type: 'number', size: 15 },
   ] },
-  chatroom: { title: 'Chatroom对接', fields: [
+  chatroom: { title: 'Chatroom 对接 —— 服务端读写与白名单', fields: [
     { k: 'base_url', label: '服务端地址', type: 'text', size: 45 },
     { k: 'channel_id', label: '目标频道 ID', type: 'number', size: 15 },
     { k: 'poll_interval', label: '读轮询间隔(秒)', type: 'number', size: 15 },
@@ -32,7 +30,7 @@ const FIELD_GROUPS = {
     { k: 'voice_api', label: '语音 API', type: 'text', size: 45 },
     { k: 'status_api', label: '状态 API', type: 'text', size: 45 },
   ] },
-  chatbridge: { title: 'ChatBridge互通', fields: [
+  chatbridge: { title: 'ChatBridge 互通 —— MC 游戏服（AES-CBC/TCP 21027）', fields: [
     { k: 'enabled', label: '启用', type: 'bool' },
     { k: 'host', label: '游戏服地址', type: 'text', size: 30 },
     { k: 'port', label: '端口', type: 'number', size: 15 },
@@ -40,18 +38,18 @@ const FIELD_GROUPS = {
     { k: 'password', label: 'password', type: 'secret', size: 25 },
     { k: 'aes_key', label: 'aes_key', type: 'secret', size: 25 },
   ] },
-  commands: { title: '群命令', fields: [
+  commands: { title: '群命令 —— /chatroom /server 与权限', fields: [
     { k: 'group_allow_all', label: '所有群可用', type: 'bool' },
     { k: 'status_image', label: '/server 发状态图', type: 'bool' },
     { k: 'allow_from', label: '白名单群', type: 'intlist', size: 30 },
   ] },
-  api: { title: 'API服务', fields: [
+  api: { title: 'API 服务 —— HTTP API（本控制台的数据来源）', fields: [
     { k: 'enabled', label: '启用', type: 'bool' },
     { k: 'listen_host', label: '监听地址', type: 'text', size: 25 },
     { k: 'listen_port', label: '监听端口', type: 'number', size: 15 },
     { k: 'access_token', label: 'access_token', type: 'secret', size: 25 },
   ] },
-  agent: { title: 'Agent能力', fields: [
+  agent: { title: 'Agent 能力 —— 检索问答 / 智能路由 / LLM', fields: [
     { k: 'enabled', label: '启用', type: 'bool' },
     { k: 'llm.api_url', label: 'LLM API 地址', type: 'text', size: 45 },
     { k: 'llm.api_key', label: 'LLM api_key', type: 'secret', size: 25 },
@@ -61,16 +59,26 @@ const FIELD_GROUPS = {
     { k: 'routing.enabled', label: '智能路由(@bot)', type: 'bool' },
     { k: 'routing.group_ids', label: '路由灰度群', type: 'intlist', size: 30 },
   ] },
-  patch: { key: 'patch_broadcast', title: '版本播报', fields: [
+  patch: { key: 'patch_broadcast', title: '版本播报 —— Mojang 更新自动播报', fields: [
     { k: 'enabled', label: '启用', type: 'bool' },
     { k: 'feed_url', label: '官方 feed（v2）', type: 'text', size: 45 },
     { k: 'poll_interval_secs', label: '轮询间隔(秒)', type: 'number', size: 15 },
   ] },
-  root: { title: '运行参数', fields: [
+  root: { title: '运行参数 —— 状态文件与日志', fields: [
     { k: 'state_path', label: 'state.json 路径', type: 'text', size: 45 },
     { k: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'] },
     { k: 'log_format', label: '日志格式', type: 'select', options: ['text', 'json'] },
   ] },
+};
+
+// ---------- 页面 → 分组（导航页；组保存 = 一次 PUT 全部组内字段） ----------
+const PAGES = {
+  overview: { title: '系统总览' },
+  access: { title: '接入与互通', sections: ['onebot', 'chatroom', 'chatbridge'] },
+  features: { title: '功能开关', sections: ['commands', 'api', 'agent', 'patch'] },
+  root: { title: '运行参数', sections: ['root'] },
+  messages: { title: '消息与下发' },
+  logs: { title: '运行日志' },
 };
 
 // ---------- 全局状态 ----------
@@ -177,11 +185,8 @@ function switchPage(name) {
   for (const link of document.querySelectorAll('#navbar a')) {
     link.classList.toggle('current', link.dataset.page === name);
   }
-  setOp('浏览：' + (FIELD_GROUPS[name] ? FIELD_GROUPS[name].title : navTitle(name)));
+  setOp('浏览：' + (PAGES[name] ? PAGES[name].title : name));
   window.scrollTo(0, 0);
-}
-function navTitle(name) {
-  return { overview: '系统总览', messages: '消息与下发', logs: '运行日志' }[name] || name;
 }
 
 // ============================================================
@@ -200,7 +205,12 @@ function setPath(obj, dotted, value) {
   cur[keys[keys.length - 1]] = value;
 }
 
-// 单个字段控件（含 data-path 供收集）
+// 字段的绝对配置路径（root 分区直接在顶层）
+function fieldPath(secKey, field) {
+  return secKey === 'root' ? field.k : secKey + '.' + field.k;
+}
+
+// 单个字段控件（含 data-path = 绝对配置路径，供收集）
 function buildFieldControl(field, dotted, value) {
   const size = field.size || 25;
   if (field.type === 'secret') {
@@ -272,14 +282,12 @@ function buildFieldControl(field, dotted, value) {
 
 function renderAllConfigForms(masked) {
   configData = masked;
-  for (const [pageKey, group] of Object.entries(FIELD_GROUPS)) {
-    const table = $('tbl-' + pageKey);
+  for (const [secKey, section] of Object.entries(SECTIONS)) {
+    const table = $('tbl-' + secKey);
     if (!table) continue;
-    const sectionKey = group.key || pageKey;   // root 页字段直接在顶层
     table.innerHTML = '';
-    for (const field of group.fields) {
-      const dotted = sectionKey === 'root' ? field.k : sectionKey + '.' + field.k;
-      const value = getPath(masked, dotted);
+    for (const field of section.fields) {
+      const dotted = fieldPath(secKey, field);
       const tr = table.insertRow(-1);
       const tdLabel = tr.insertCell(-1);
       tdLabel.width = 150;
@@ -287,28 +295,28 @@ function renderAllConfigForms(masked) {
       tdLabel.textContent = field.label + '：';
       const tdValue = tr.insertCell(-1);
       tdValue.align = 'left';
-      tdValue.appendChild(buildFieldControl(field, dotted, value));
+      tdValue.appendChild(buildFieldControl(field, dotted, getPath(masked, dotted)));
     }
   }
 }
 
-// 收集某页的字段 → 部分配置对象（未动的敏感字段原样带回脱敏对象 = 后端保留原值）
+// 收集某组的全部字段 → 部分配置对象（未动的敏感字段原样带回脱敏对象 = 后端保留原值）
 function collectPage(pageKey) {
-  const group = FIELD_GROUPS[pageKey];
-  const sectionKey = group.key || pageKey;
-  const payload = sectionKey === 'root' ? {} : { [sectionKey]: {} };
-  for (const el of document.querySelectorAll('#tbl-' + pageKey + ' [data-path]')) {
-    const dotted = el.dataset.path;
-    const kind = el.dataset.kind;
-    if (kind === 'bool') { setPath(payload, dotted, el.checked); continue; }
-    if (kind === 'number') { setPath(payload, dotted, el.value === '' ? 0 : parseInt(el.value, 10)); continue; }
-    if (kind === 'intlist') {
-      setPath(payload, dotted, el.value.split(/[,，\s]+/).filter(Boolean).map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n)));
-      continue;
+  const payload = {};
+  for (const secKey of PAGES[pageKey].sections || []) {
+    for (const el of document.querySelectorAll('#tbl-' + secKey + ' [data-path]')) {
+      const dotted = el.dataset.path;   // 绝对配置路径（root 分区即顶层）
+      const kind = el.dataset.kind;
+      if (kind === 'bool') { setPath(payload, dotted, el.checked); continue; }
+      if (kind === 'number') { setPath(payload, dotted, el.value === '' ? 0 : parseInt(el.value, 10)); continue; }
+      if (kind === 'intlist') {
+        setPath(payload, dotted, el.value.split(/[,，\s]+/).filter(Boolean).map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n)));
+        continue;
+      }
+      if (kind === 'select') { setPath(payload, dotted, el.value); continue; }
+      // secret-new：点了修改 → 填了用新值，留空发空串（后端保留原值）
+      setPath(payload, dotted, el.value);
     }
-    if (kind === 'select') { setPath(payload, dotted, el.value); continue; }
-    // secret-new：点了修改 → 填了用新值，留空发空串（后端保留原值）
-    setPath(payload, dotted, el.value);
   }
   return payload;
 }
@@ -320,8 +328,8 @@ async function loadConfig() {
   } catch (err) {
     if (err.message === '401') return;
     setOp('配置加载失败：' + err.message);
-    for (const [pageKey] of Object.entries(FIELD_GROUPS)) {
-      const table = $('tbl-' + pageKey);
+    for (const secKey of Object.keys(SECTIONS)) {
+      const table = $('tbl-' + secKey);
       if (table) table.innerHTML = '<tr><td style="color:#a00000">服务未连接</td></tr>';
     }
   }
@@ -331,7 +339,7 @@ async function savePage(pageKey) {
   const msg = $('msg-' + pageKey);
   const progress = $('progress-' + pageKey);
   msg.textContent = '配置已提交，正在写入……';
-  setOp('正在保存 ' + FIELD_GROUPS[pageKey].title + ' …');
+  setOp('正在保存 ' + PAGES[pageKey].title + ' …');
   try {
     const data = await api('PUT', '/api/config', collectPage(pageKey));
     if (data.errors && data.errors.length) {
@@ -363,7 +371,7 @@ async function savePage(pageKey) {
       ? '已保存，但服务 30 秒内未报告就绪，请检查容器日志'
       : '配置已保存并生效';
     setOp('就绪');
-    addLocalLog('保存配置·' + FIELD_GROUPS[pageKey].title + '（' + (data.changed || []).join(', ') + '）');
+    addLocalLog('保存配置·' + PAGES[pageKey].title + '（' + (data.changed || []).join(', ') + '）');
     loadConfig();
   } catch (err) {
     if (err.message === '401') return;
@@ -377,8 +385,8 @@ async function reloadPage(pageKey) {
   await loadConfig();
   const msg = $('msg-' + pageKey);
   msg.style.color = 'black';
-  msg.textContent = '已从服务器还原本页';
-  setOp('还原本页：' + FIELD_GROUPS[pageKey].title);
+  msg.textContent = '已从服务器还原本组';
+  setOp('还原本组：' + PAGES[pageKey].title);
 }
 
 // ============================================================

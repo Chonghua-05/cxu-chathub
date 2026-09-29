@@ -72,13 +72,8 @@
   <tr>
     <td bgcolor="#E0E0E0" align="center" id="navbar">
       <a href="#overview" class="navlink" data-page="overview">系统总览</a> |
-      <a href="#onebot" class="navlink" data-page="onebot">OneBot配置</a> |
-      <a href="#chatroom" class="navlink" data-page="chatroom">Chatroom对接</a> |
-      <a href="#chatbridge" class="navlink" data-page="chatbridge">ChatBridge互通</a> |
-      <a href="#commands" class="navlink" data-page="commands">群命令</a> |
-      <a href="#api" class="navlink" data-page="api">API服务</a> |
-      <a href="#agent" class="navlink" data-page="agent">Agent能力</a> |
-      <a href="#patch" class="navlink" data-page="patch">版本播报</a> |
+      <a href="#access" class="navlink" data-page="access">接入与互通</a> |
+      <a href="#features" class="navlink" data-page="features">功能开关</a> |
       <a href="#root" class="navlink" data-page="root">运行参数</a> |
       <a href="#messages" class="navlink" data-page="messages">消息与下发</a> |
       <a href="#logs" class="navlink" data-page="logs">运行日志</a>
@@ -144,137 +139,67 @@
     </td>
   </tr>
 
-  <!-- ========== 配置页 ×8（单列表单，JS 渲染进表格壳） ========== -->
-  <tr class="page hidden" id="page-onebot">
+  <!-- ========== 配置页 ×3（分组合并；每组一次保存，后端按提交字段深合并） ========== -->
+  <tr class="page hidden" id="page-access">
     <td align="left">
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>OneBot 配置 —— NapCat 反向 WS 接入</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-onebot"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="onebot">保存配置</button>
-          <button class="btn95" data-reload="onebot">重置修改</button>
-        </center>
-        <center><font id="msg-onebot" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-onebot">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
-    </td>
-  </tr>
-
-  <tr class="page hidden" id="page-chatroom">
-    <td align="left">
+      <br>
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>Chatroom 对接 —— 服务端读写与白名单</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-chatroom"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="chatroom">保存配置</button>
-          <button class="btn95" data-reload="chatroom">重置修改</button>
-        </center>
-        <center><font id="msg-chatroom" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-chatroom">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
-    </td>
-  </tr>
-
-  <tr class="page hidden" id="page-chatbridge">
-    <td align="left">
+      <br>
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>ChatBridge 互通 —— MC 游戏服（AES-CBC/TCP 21027）</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-chatbridge"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="chatbridge">保存配置</button>
-          <button class="btn95" data-reload="chatbridge">重置修改</button>
-        </center>
-        <center><font id="msg-chatbridge" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-chatbridge">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
+      <br>
+      <center>
+        <button class="btn95" data-save="access">保存本组配置</button>
+        <button class="btn95" data-reload="access">重置修改</button>
+      </center>
+      <center><font id="msg-access" color="red"><b></b></font></center>
+      <div class="seg-wrap hidden" id="progress-access">
+        <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+      </div>
     </td>
   </tr>
 
-  <tr class="page hidden" id="page-commands">
+  <tr class="page hidden" id="page-features">
     <td align="left">
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>群命令 —— /chatroom /server 与权限</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-commands"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="commands">保存配置</button>
-          <button class="btn95" data-reload="commands">重置修改</button>
-        </center>
-        <center><font id="msg-commands" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-commands">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
-    </td>
-  </tr>
-
-  <tr class="page hidden" id="page-api">
-    <td align="left">
+      <br>
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>API 服务 —— HTTP API（本控制台的数据来源）</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-api"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="api">保存配置</button>
-          <button class="btn95" data-reload="api">重置修改</button>
-        </center>
-        <center><font id="msg-api" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-api">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
-    </td>
-  </tr>
-
-  <tr class="page hidden" id="page-agent">
-    <td align="left">
+      <br>
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>Agent 能力 —— 检索问答 / 智能路由 / LLM</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-agent"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="agent">保存配置</button>
-          <button class="btn95" data-reload="agent">重置修改</button>
-        </center>
-        <center><font id="msg-agent" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-agent">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
-    </td>
-  </tr>
-
-  <tr class="page hidden" id="page-patch">
-    <td align="left">
+      <br>
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>版本播报 —— Mojang 更新自动播报</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-patch"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="patch">保存配置</button>
-          <button class="btn95" data-reload="patch">重置修改</button>
-        </center>
-        <center><font id="msg-patch" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-patch">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
+      <br>
+      <center>
+        <button class="btn95" data-save="features">保存本组配置</button>
+        <button class="btn95" data-reload="features">重置修改</button>
+      </center>
+      <center><font id="msg-features" color="red"><b></b></font></center>
+      <div class="seg-wrap hidden" id="progress-features">
+        <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+      </div>
     </td>
   </tr>
 
@@ -283,17 +208,17 @@
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>运行参数 —— 状态文件与日志</legend>
         <table width="600" cellpadding="4" cellspacing="0" id="tbl-root"></table>
-        <br>
-        <center>
-          <button class="btn95" data-save="root">保存配置</button>
-          <button class="btn95" data-reload="root">重置修改</button>
-        </center>
-        <center><font id="msg-root" color="red"><b></b></font></center>
-        <div class="seg-wrap hidden" id="progress-root">
-          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-          <div class="seg-text">服务正在重启，请稍候……</div></center>
-        </div>
       </fieldset>
+      <br>
+      <center>
+        <button class="btn95" data-save="root">保存本组配置</button>
+        <button class="btn95" data-reload="root">重置修改</button>
+      </center>
+      <center><font id="msg-root" color="red"><b></b></font></center>
+      <div class="seg-wrap hidden" id="progress-root">
+        <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+      </div>
     </td>
   </tr>
 

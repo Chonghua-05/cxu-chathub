@@ -1,108 +1,96 @@
 // ============================================================
-// cxu-chathub 控制台 —— 前端逻辑（原生 JS，无框架）
-// 结构：登录 → 配置面板（schema 驱动渲染）→ 状态监视（SSE + 轮询兜底）
-//       → 消息列表 → relay 下发 → 操作日志
+// cxu-chathub 控制台 —— 前端逻辑（1999 年文档式页面，原生 JS）
+// 导航 = 文字链接切换 .page；每页独立保存（PUT 部分字段，后端深合并）。
 // ============================================================
 
 'use strict';
 
-// ---------- 配置面板的 schema（按 config.json 顶层字段分组） ----------
-// type: text 文本 / number 整数 / bool 复选 / intlist 逗号分隔整数列表
-//       secret 敏感字段（is_set + 修改按钮）/ select 下拉
-// dotted key 支持嵌套（如 agent.llm.api_url）
-const FIELD_GROUPS = [
-  {
-    key: 'onebot', title: 'onebot —— NapCat 反向 WS 接入', fields: [
-      { k: 'listen_host', label: '监听地址', type: 'text' },
-      { k: 'listen_port', label: '监听端口', type: 'number' },
-      { k: 'path', label: 'WS 路径', type: 'text' },
-      { k: 'access_token', label: 'access_token', type: 'secret' },
-      { k: 'self_id', label: '机器人 QQ 号', type: 'number' },
-    ],
-  },
-  {
-    key: 'chatroom', title: 'chatroom —— 服务端对接', fields: [
-      { k: 'base_url', label: '服务端地址', type: 'text' },
-      { k: 'channel_id', label: '目标频道 ID', type: 'number' },
-      { k: 'forward_token', label: 'forward_token', type: 'secret' },
-      { k: 'refresh_token', label: 'refresh_token', type: 'secret' },
-      { k: 'group_ids', label: 'QQ 群白名单', type: 'intlist' },
-      { k: 'qq_sync_enabled', label: 'QQ 群 → chatroom 同步', type: 'bool' },
-      { k: 'qq_forward_enabled', label: '!q → QQ 群', type: 'bool' },
-      { k: 'qq_to_game_enabled', label: '!q → 游戏内', type: 'bool' },
-      { k: 'poll_interval', label: '读轮询间隔（秒）', type: 'number' },
-      { k: 'voice_api', label: '语音 API', type: 'text' },
-      { k: 'status_api', label: '状态 API', type: 'text' },
-      { k: 'player_join_pattern', label: '上线识别正则', type: 'text' },
-      { k: 'player_quit_pattern', label: '下线识别正则', type: 'text' },
-    ],
-  },
-  {
-    key: 'chatbridge', title: 'chatbridge —— MC 游戏互通', fields: [
-      { k: 'enabled', label: '启用', type: 'bool' },
-      { k: 'host', label: '游戏服地址', type: 'text' },
-      { k: 'port', label: '端口', type: 'number' },
-      { k: 'name', label: '客户端标识', type: 'text' },
-      { k: 'password', label: 'password', type: 'secret' },
-      { k: 'aes_key', label: 'aes_key', type: 'secret' },
-    ],
-  },
-  {
-    key: 'commands', title: 'commands —— 群内命令', fields: [
-      { k: 'group_allow_all', label: '所有群可用', type: 'bool' },
-      { k: 'allow_from', label: '白名单群', type: 'intlist' },
-      { k: 'status_image', label: '/server 发状态图', type: 'bool' },
-    ],
-  },
-  {
-    key: 'api', title: 'api —— HTTP API', fields: [
-      { k: 'enabled', label: '启用', type: 'bool' },
-      { k: 'listen_host', label: '监听地址', type: 'text' },
-      { k: 'listen_port', label: '监听端口', type: 'number' },
-      { k: 'access_token', label: 'access_token', type: 'secret' },
-    ],
-  },
-  {
-    key: 'agent', title: 'agent —— 检索问答与智能路由', fields: [
-      { k: 'enabled', label: '启用', type: 'bool' },
-      { k: 'llm.api_url', label: 'LLM API 地址', type: 'text' },
-      { k: 'llm.api_key', label: 'LLM api_key', type: 'secret' },
-      { k: 'llm.model', label: 'LLM 模型', type: 'text' },
-      { k: 'llm.timeout_secs', label: 'LLM 超时（秒）', type: 'number' },
-      { k: 'llm.max_answer_chars', label: '回答长度上限', type: 'number' },
-      { k: 'routing.enabled', label: '智能路由（@bot 触发）', type: 'bool' },
-      { k: 'routing.group_ids', label: '路由灰度群', type: 'intlist' },
-    ],
-  },
-  {
-    key: 'patch_broadcast', title: 'patch_broadcast —— 版本更新播报', fields: [
-      { k: 'enabled', label: '启用', type: 'bool' },
-      { k: 'feed_url', label: '官方 feed（v2）', type: 'text' },
-      { k: 'poll_interval_secs', label: '轮询间隔（秒）', type: 'number' },
-    ],
-  },
-  {
-    key: 'root', title: '顶层 —— 状态与日志', fields: [
-      { k: 'state_path', label: 'state.json 路径', type: 'text' },
-      { k: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'] },
-      { k: 'log_format', label: '日志格式', type: 'select', options: ['text', 'json'] },
-    ],
-  },
-];
+// ---------- 配置 schema：一个分组 = 主导航的一页 ----------
+const FIELD_GROUPS = {
+  onebot: { title: 'OneBot 配置', fields: [
+    { k: 'listen_host', label: '监听地址', type: 'text' },
+    { k: 'listen_port', label: '监听端口', type: 'number' },
+    { k: 'path', label: 'WS 路径', type: 'text' },
+    { k: 'access_token', label: 'access_token', type: 'secret' },
+    { k: 'self_id', label: '机器人 QQ 号', type: 'number' },
+  ] },
+  chatroom: { title: 'Chatroom 对接', fields: [
+    { k: 'base_url', label: '服务端地址', type: 'text' },
+    { k: 'channel_id', label: '目标频道 ID', type: 'number' },
+    { k: 'forward_token', label: 'forward_token', type: 'secret' },
+    { k: 'refresh_token', label: 'refresh_token', type: 'secret' },
+    { k: 'group_ids', label: 'QQ 群白名单', type: 'intlist' },
+    { k: 'qq_sync_enabled', label: 'QQ 群 → chatroom 同步', type: 'bool' },
+    { k: 'qq_forward_enabled', label: '!q → QQ 群', type: 'bool' },
+    { k: 'qq_to_game_enabled', label: '!q → 游戏内', type: 'bool' },
+    { k: 'poll_interval', label: '读轮询间隔（秒）', type: 'number' },
+    { k: 'voice_api', label: '语音 API', type: 'text' },
+    { k: 'status_api', label: '状态 API', type: 'text' },
+    { k: 'player_join_pattern', label: '上线识别正则', type: 'text' },
+    { k: 'player_quit_pattern', label: '下线识别正则', type: 'text' },
+  ] },
+  chatbridge: { title: 'ChatBridge 互通', fields: [
+    { k: 'enabled', label: '启用', type: 'bool' },
+    { k: 'host', label: '游戏服地址', type: 'text' },
+    { k: 'port', label: '端口', type: 'number' },
+    { k: 'name', label: '客户端标识', type: 'text' },
+    { k: 'password', label: 'password', type: 'secret' },
+    { k: 'aes_key', label: 'aes_key', type: 'secret' },
+  ] },
+  commands: { title: '群命令', fields: [
+    { k: 'group_allow_all', label: '所有群可用', type: 'bool' },
+    { k: 'allow_from', label: '白名单群', type: 'intlist' },
+    { k: 'status_image', label: '/server 发状态图', type: 'bool' },
+  ] },
+  api: { title: 'API 服务', fields: [
+    { k: 'enabled', label: '启用', type: 'bool' },
+    { k: 'listen_host', label: '监听地址', type: 'text' },
+    { k: 'listen_port', label: '监听端口', type: 'number' },
+    { k: 'access_token', label: 'access_token', type: 'secret' },
+  ] },
+  agent: { title: 'Agent 能力', fields: [
+    { k: 'enabled', label: '启用', type: 'bool' },
+    { k: 'llm.api_url', label: 'LLM API 地址', type: 'text' },
+    { k: 'llm.api_key', label: 'LLM api_key', type: 'secret' },
+    { k: 'llm.model', label: 'LLM 模型', type: 'text' },
+    { k: 'llm.timeout_secs', label: 'LLM 超时（秒）', type: 'number' },
+    { k: 'llm.max_answer_chars', label: '回答长度上限', type: 'number' },
+    { k: 'routing.enabled', label: '智能路由（@bot 触发）', type: 'bool' },
+    { k: 'routing.group_ids', label: '路由灰度群', type: 'intlist' },
+  ] },
+  patch: { key: 'patch_broadcast', title: '版本播报', fields: [
+    { k: 'enabled', label: '启用', type: 'bool' },
+    { k: 'feed_url', label: '官方 feed（v2）', type: 'text' },
+    { k: 'poll_interval_secs', label: '轮询间隔（秒）', type: 'number' },
+  ] },
+  root: { title: '运行参数', fields: [
+    { k: 'state_path', label: 'state.json 路径', type: 'text' },
+    { k: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'] },
+    { k: 'log_format', label: '日志格式', type: 'select', options: ['text', 'json'] },
+  ] },
+};
 
 // ---------- 全局状态 ----------
-let requestCount = 0;      // 本次会话请求数
-let statusPaused = false;  // 状态刷新暂停
-let sseSource = null;      // EventSource
-let pollTimer = null;      // 轮询兜底
-let msgTimer = null;       // 消息轮询
-let logTimer = null;       // 日志轮询
-let configData = null;     // 最近一次加载（脱敏形态）
-let localLogs = [];        // 前端本地操作记录
+let requestCount = 0;
+let statusPaused = false;
+let sseSource = null;
+let pollTimer = null;
+let msgTimer = null;
+let logTimer = null;
+let configData = null;   // 最近一次加载的脱敏配置
+let localLogs = [];      // 前端本地记录
 
 const $ = (id) => document.getElementById(id);
 
-// ---------- 基础请求封装（计数 + 401 回登录页） ----------
+// ---------- 状态栏 / 时钟 ----------
+function setOp(text) { $('sb-op').textContent = text; }
+function tickClock() {
+  const now = new Date().toTimeString().slice(0, 8);
+  $('sb-time').textContent = now;
+  $('clock').textContent = now;
+}
+
+// ---------- 请求封装（计数 + 401 回登录） ----------
 async function api(method, url, body) {
   requestCount++;
   $('req-count').textContent = requestCount;
@@ -122,7 +110,7 @@ async function api(method, url, body) {
   return data;
 }
 
-// ---------- 登录 / 注销 ----------
+// ---------- 登录 / 注销（登录页保持不变） ----------
 function showLogin(message) {
   stopAll();
   $('console').classList.add('hidden');
@@ -161,12 +149,14 @@ function enterConsole(user) {
   requestCount = 0;
   $('req-count').textContent = '0';
   localLogs = [];
+  switchPage('overview');
   loadConfig();
   startStatusStream();
   refreshMessages();
   msgTimer = setInterval(refreshMessages, 2000);
   refreshLogs();
   logTimer = setInterval(refreshLogs, 5000);
+  setOp('就绪');
 }
 
 function stopAll() {
@@ -174,18 +164,29 @@ function stopAll() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   if (msgTimer) { clearInterval(msgTimer); msgTimer = null; }
   if (logTimer) { clearInterval(logTimer); logTimer = null; }
-  $('refresh-mode').textContent = '已停止';
+}
+
+// ---------- 主导航：文字链接切换页面（整体切换，无过渡动画） ----------
+function switchPage(name) {
+  for (const el of document.querySelectorAll('.page')) el.classList.add('hidden');
+  const target = $('page-' + name);
+  if (target) target.classList.remove('hidden');
+  for (const link of document.querySelectorAll('.navlink')) {
+    link.classList.toggle('current', link.dataset.page === name);
+  }
+  setOp('浏览：' + (FIELD_GROUPS[name] ? FIELD_GROUPS[name].title : navTitle(name)));
+  window.scrollTo(0, 0);
+}
+function navTitle(name) {
+  return { overview: '系统总览', messages: '消息与下发', logs: '运行日志' }[name] || name;
 }
 
 // ============================================================
-// 配置面板（schema 驱动）
+// 配置表单（schema 驱动渲染进各页的表格壳）
 // ============================================================
-
-// 点分路径取值
 function getPath(obj, dotted) {
   return dotted.split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);
 }
-// 点分路径设值
 function setPath(obj, dotted, value) {
   const keys = dotted.split('.');
   let cur = obj;
@@ -196,69 +197,53 @@ function setPath(obj, dotted, value) {
   cur[keys[keys.length - 1]] = value;
 }
 
-function renderConfig(masked) {
+function renderAllConfigForms(masked) {
   configData = masked;
-  const form = $('config-form');
-  form.innerHTML = '';
-  for (const group of FIELD_GROUPS) {
-    const fs = document.createElement('fieldset');
-    fs.className = 'inner';
-    const legend = document.createElement('legend');
-    legend.textContent = group.title;
-    fs.appendChild(legend);
-    const table = document.createElement('table');
-    table.className = 'cfg-table';
+  for (const [pageKey, group] of Object.entries(FIELD_GROUPS)) {
+    const table = $('tbl-' + pageKey);
+    if (!table) continue;
+    const sectionKey = group.key || pageKey; // root 页字段直接在顶层
+    table.innerHTML = '';
     for (const field of group.fields) {
+      const dotted = sectionKey === 'root' ? field.k : sectionKey + '.' + field.k;
       const tr = document.createElement('tr');
       const tdLabel = document.createElement('td');
       tdLabel.className = 'lbl';
       tdLabel.textContent = field.label + '：';
       const tdValue = document.createElement('td');
-      renderFieldValue(tdValue, field, getPath(masked, group.key === 'root' ? field.k : group.key + '.' + field.k));
+      renderFieldValue(tdValue, field, dotted, getPath(masked, dotted));
       tr.appendChild(tdLabel);
       tr.appendChild(tdValue);
       table.appendChild(tr);
     }
-    fs.appendChild(table);
-    form.appendChild(fs);
   }
 }
 
-// 字段值 → 控件（含路径前缀，收集时按同一路径写回）
-function renderFieldValue(td, field, value) {
-  const path = field.k;
+function renderFieldValue(td, field, path, value) {
   if (field.type === 'secret') {
-    // 敏感字段：显示 已设置/未设置 + 修改按钮（勾选后才出空输入框，留空 = 保留原值）
     const isSet = !!(value && value.is_set);
     const state = document.createElement('span');
-    state.className = 'secret-state ' + (isSet ? 'set' : 'unset');
+    state.className = isSet ? 'log-result-ok' : 'dim';
     state.textContent = isSet ? '已设置' : '未设置';
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn95 btn-sm';
+    btn.className = 'btn95';
     btn.textContent = '修改';
     const input = document.createElement('input');
     input.type = 'password';
     input.dataset.path = path;
     input.dataset.kind = 'secret-new';
     input.style.display = 'none';
-    input.style.width = '200px';
+    input.style.width = '220px';
     btn.addEventListener('click', () => {
       const showing = input.style.display !== 'none';
       input.style.display = showing ? 'none' : 'inline-block';
       btn.textContent = showing ? '修改' : '取消';
       if (!showing) input.focus();
     });
-    const hiddenKeep = document.createElement('input');
-    hiddenKeep.type = 'hidden';
-    hiddenKeep.dataset.path = path;
-    hiddenKeep.dataset.kind = 'secret-keep';
-    hiddenKeep.value = isSet ? 'keep' : '';
-    td.className = 'secret-cell';
     td.appendChild(state);
     td.appendChild(btn);
     td.appendChild(input);
-    td.appendChild(hiddenKeep);
     return;
   }
   if (field.type === 'bool') {
@@ -294,81 +279,75 @@ function renderFieldValue(td, field, value) {
     td.appendChild(input);
     return;
   }
-  // text / number
   const input = document.createElement('input');
   input.type = field.type === 'number' ? 'number' : 'text';
   input.dataset.path = path;
   input.dataset.kind = field.type === 'number' ? 'number' : 'text';
-  if (field.type === 'number') { input.classList.add('short'); input.step = '1'; }
+  if (field.type === 'number') { input.classList.add('short'); input.step = '1'; input.style.width = '90px'; }
   input.value = value === undefined || value === null ? '' : value;
   td.appendChild(input);
 }
 
-// 从表单收集完整配置对象（在加载的脱敏配置上覆盖用户改过的字段；
-// 敏感字段：未点修改 → 原样带回脱敏对象；点了修改但留空 → 空串（后端保留原值））
-function collectConfig() {
-  const out = JSON.parse(JSON.stringify(configData));
-  const fields = document.querySelectorAll('#config-form [data-path]');
-  const secretTouched = new Set(); // 点了「修改」的敏感字段
-  document.querySelectorAll('#config-form input[data-kind="secret-new"]').forEach((input) => {
-    if (input.style.display !== 'none') secretTouched.add(input.dataset.path);
-  });
-  for (const el of fields) {
-    const path = el.dataset.path;
-    const kind = el.dataset.kind;
-    if (kind === 'secret-keep') continue;
-    if (kind === 'secret-new') {
-      // 点了修改：填了新值用新值；留空发空串（后端保留原值）
-      setPath(out, path, el.value);
+// 收集某页的字段 → 部分配置对象（未动的敏感字段原样带回脱敏对象 = 后端保留原值）
+function collectPage(pageKey) {
+  const group = FIELD_GROUPS[pageKey];
+  const sectionKey = group.key || pageKey;
+  const payload = sectionKey === 'root' ? {} : { [sectionKey]: {} };
+  for (const field of group.fields) {
+    const dotted = sectionKey === 'root' ? field.k : sectionKey + '.' + field.k;
+    const el = document.querySelector(`#tbl-${pageKey} [data-path="${CSS.escape(dotted)}"]`);
+    if (!el) continue;
+    if (el.dataset.kind === 'secret-new') {
+      setPath(payload, dotted, el.value);   // 空串 = 后端保留原值
       continue;
     }
-    if (kind === 'bool') { setPath(out, path, el.checked); continue; }
-    if (kind === 'number') { setPath(out, path, el.value === '' ? 0 : parseInt(el.value, 10)); continue; }
-    if (kind === 'intlist') {
-      setPath(out, path, el.value.split(/[,，\s]+/).filter(Boolean).map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n)));
+    if (el.dataset.kind === 'bool') { setPath(payload, dotted, el.checked); continue; }
+    if (el.dataset.kind === 'number') { setPath(payload, dotted, el.value === '' ? 0 : parseInt(el.value, 10)); continue; }
+    if (el.dataset.kind === 'intlist') {
+      setPath(payload, dotted, el.value.split(/[,，\s]+/).filter(Boolean).map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n)));
       continue;
     }
-    setPath(out, path, el.value);
+    setPath(payload, dotted, el.value);
   }
-  void secretTouched;
-  return out;
+  return payload;
 }
 
 async function loadConfig() {
-  $('cfg-msg').className = 'cfg-msg';
-  $('cfg-msg').textContent = '正在加载配置……';
   try {
     const data = await api('GET', '/api/config');
-    renderConfig(data.config);
-    $('cfg-msg').textContent = '';
+    renderAllConfigForms(data.config);
   } catch (err) {
-    $('cfg-msg').className = 'cfg-msg err';
-    $('cfg-msg').textContent = err.message === '401' ? '' : '服务未连接：' + err.message;
-    $('config-form').innerHTML = '<div class="dim">服务未连接</div>';
+    if (err.message === '401') return;
+    setOp('配置加载失败：' + err.message);
+    for (const [pageKey] of Object.entries(FIELD_GROUPS)) {
+      const table = $('tbl-' + pageKey);
+      if (table) table.innerHTML = '<tr><td style="color:#a00000">服务未连接</td></tr>';
+    }
   }
 }
 
-async function saveConfig() {
-  const msg = $('cfg-msg');
-  msg.className = 'cfg-msg';
+async function savePage(pageKey) {
+  const msg = $('msg-' + pageKey);
+  const progress = $('progress-' + pageKey);
+  msg.className = 'pagemsg';
   msg.textContent = '正在保存……';
+  setOp('正在保存 ' + FIELD_GROUPS[pageKey].title + ' …');
   try {
-    const payload = collectConfig();
-    const data = await api('PUT', '/api/config', payload);
+    const data = await api('PUT', '/api/config', collectPage(pageKey));
     if (data.errors && data.errors.length) {
-      msg.className = 'cfg-msg err';
-      msg.innerHTML = data.errors.map(esc).join('<br>');
+      msg.className = 'pagemsg err';
+      msg.textContent = data.errors.join('；');
+      setOp('保存失败（校验未通过）');
       return;
     }
-    // 成功：展示分段进度条，等重启就绪
-    $('restart-progress').classList.remove('hidden');
-    $('cfg-msg').textContent = '';
-    const segBar = document.querySelector('.seg-bar');
-    segBar.classList.add('on');
-    $('restart-text').textContent = data.restarted
+    msg.className = 'pagemsg';
+    msg.textContent = data.note || '';
+    progress.classList.remove('hidden');
+    progress.querySelector('.seg-bar').classList.add('on');
+    progress.querySelector('.seg-text').textContent = data.restarted
       ? '配置已写入，服务重启中……'
       : '配置已写入（' + (data.note || '未执行重启') + '）';
-    // 轮询就绪（后端已轮询过一轮，这里再兜底 15 秒）
+    setOp('服务重启中……');
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       try {
@@ -377,44 +356,34 @@ async function saveConfig() {
       } catch (e) { /* 继续等 */ }
       await new Promise((r) => setTimeout(r, 1000));
     }
-    segBar.classList.remove('on');
-    $('restart-progress').classList.add('hidden');
-    msg.className = 'cfg-msg ok';
-    msg.textContent = data.ready === false && data.restarted
-      ? '已保存，但服务 ' + 30 + ' 秒内未报告就绪，请检查容器日志'
+    progress.querySelector('.seg-bar').classList.remove('on');
+    progress.classList.add('hidden');
+    msg.className = 'pagemsg ok';
+    msg.textContent = data.restarted && data.ready === false
+      ? '已保存，但服务 30 秒内未报告就绪，请检查容器日志'
       : '已保存并生效';
-    addLocalLog('保存配置（' + (data.changed || []).join(', ') + '）');
+    setOp('就绪');
     loadConfig();
   } catch (err) {
     if (err.message === '401') return;
-    msg.className = 'cfg-msg err';
+    msg.className = 'pagemsg err';
     msg.textContent = '保存失败：' + err.message;
+    setOp('保存失败');
   }
 }
 
-async function resetConfig() {
-  if (!confirm('确定恢复默认配置吗？\n当前 config.json 将被内置模板覆盖，服务会重启！')) return;
-  $('cfg-msg').className = 'cfg-msg';
-  $('cfg-msg').textContent = '正在恢复默认……';
-  try {
-    const data = await api('POST', '/api/config/reset');
-    $('cfg-msg').className = 'cfg-msg ok';
-    $('cfg-msg').textContent = '已恢复默认' + (data.restarted ? '并重启服务' : '（' + (data.note || '') + '）');
-    addLocalLog('恢复默认配置');
-    loadConfig();
-  } catch (err) {
-    if (err.message === '401') return;
-    $('cfg-msg').className = 'cfg-msg err';
-    $('cfg-msg').textContent = '恢复失败：' + err.message;
-  }
+async function reloadPage(pageKey) {
+  await loadConfig();
+  const msg = $('msg-' + pageKey);
+  msg.className = 'pagemsg';
+  msg.textContent = '已从服务器还原本页';
+  setOp('还原本页：' + FIELD_GROUPS[pageKey].title);
 }
 
 // ============================================================
-// 状态监视（SSE 优先，失败回退 2 秒轮询）
+// 状态监视（SSE 优先，断线回退 2 秒轮询）
 // ============================================================
-
 function startStatusStream() {
-  $('refresh-mode').textContent = 'SSE';
   try {
     sseSource = new EventSource('/api/status/stream');
     sseSource.onmessage = (event) => {
@@ -422,16 +391,13 @@ function startStatusStream() {
       try { renderStatus(JSON.parse(event.data)); } catch (e) { /* 忽略半包 */ }
     };
     sseSource.onerror = () => {
-      // SSE 不可用（代理断开等）→ 回退轮询
       if (sseSource) { sseSource.close(); sseSource = null; }
       if (!pollTimer && !statusPaused) {
-        $('refresh-mode').textContent = '轮询';
         pollTimer = setInterval(pollStatusOnce, 2000);
         pollStatusOnce();
       }
     };
   } catch (e) {
-    $('refresh-mode').textContent = '轮询';
     pollTimer = setInterval(pollStatusOnce, 2000);
   }
 }
@@ -448,11 +414,9 @@ async function pollStatusOnce() {
 
 function renderStatus(st) {
   const connected = st.service_connected !== false;
-  // LED
   setLed('led-onebot', connected && st.onebot && st.onebot.connected);
   setLed('led-chatbridge', connected && st.chatbridge && st.chatbridge.enabled && st.chatbridge.connected);
   setLed('led-api', connected);
-  // 公告栏
   const marquee = $('marquee');
   if (!connected) {
     marquee.textContent = '⚠ 服务未连接 —— 请检查 cxu-chathub 容器是否在运行';
@@ -465,16 +429,14 @@ function renderStatus(st) {
     marquee.textContent = parts.join('　◆　');
     marquee.className = 'ok';
   }
-  // 子系统
   if (Array.isArray(st.subsystems)) {
     $('subsystem-list').innerHTML = st.subsystems.map((s) =>
-      `<div class="subsys-row"><span class="led ${s.healthy ? 'green' : 'red'}"></span>` +
-      `<span class="sname">${esc(s.name)}</span><span class="sdetail">${esc(s.detail)}</span></div>`
+      `<div class="subsys-row"><span class="led ${s.healthy ? 'green' : 'red'}"></span> ` +
+      `<span class="sname">${esc(s.name)}</span>　<span class="sdetail">${esc(s.detail)}</span></div>`
     ).join('');
   } else {
-    $('subsystem-list').innerHTML = '<div class="dim">服务未连接</div>';
+    $('subsystem-list').innerHTML = '<span class="dim">服务未连接</span>';
   }
-  // 系统信息
   if (connected) {
     $('info-version').textContent = 'v' + st.version;
     $('info-uptime').textContent = formatUptime(st.uptime_secs);
@@ -484,12 +446,12 @@ function renderStatus(st) {
     $('info-state').textContent = st.state ? st.state.forwarded_count + ' 条' : '-';
   }
   $('last-refresh').textContent = new Date().toTimeString().slice(0, 8);
-  $('sb-conn').textContent = connected ? '服务：已连接' : '服务：未连接';
+  const mode = sseSource ? 'SSE' : (pollTimer ? '轮询' : '-');
+  $('refresh-mode').textContent = mode;
 }
 
 function setLed(id, ok) {
-  const led = $(id);
-  led.className = 'led ' + (ok ? 'green' : 'red');
+  $(id).className = 'led ' + (ok ? 'green' : 'red');
 }
 
 function formatUptime(secs) {
@@ -501,14 +463,12 @@ function formatUptime(secs) {
 
 function togglePause() {
   statusPaused = !statusPaused;
-  $('pause-btn').textContent = statusPaused ? '继续刷新' : '暂停刷新';
-  $('sb-hint').textContent = statusPaused ? '状态刷新已暂停' : '就绪';
+  setOp(statusPaused ? '状态刷新已暂停' : '就绪');
 }
 
 // ============================================================
 // 消息列表 / relay / 日志
 // ============================================================
-
 async function refreshMessages() {
   try {
     const data = await api('GET', '/api/messages?limit=50');
@@ -561,7 +521,7 @@ async function relaySend() {
   }
 }
 
-// ---------- 操作日志（后端 /api/logs + 本地动作合并，最新在最上） ----------
+// ---------- 运行日志（后端 + 本地合并，最新在最上） ----------
 function addLocalLog(text) {
   localLogs.unshift({ time: new Date().toTimeString().slice(0, 8), user: $('whoami').textContent, action: '本地', detail: text, result: 'ok' });
   renderLogs();
@@ -574,14 +534,13 @@ async function refreshLogs() {
     backendLogs = data.logs || [];
   } catch (err) {
     if (err.message === '401') return;
-    // 服务未连接：保留本地日志
   }
   renderLogs(backendLogs);
 }
 
 function renderLogs(backendLogs) {
   const tbody = $('log-table').querySelector('tbody');
-  const all = backendLogs ? backendLogs.concat(localLogs) : localLogs.concat(localLogs);
+  const all = backendLogs ? backendLogs.concat(localLogs) : localLogs;
   const rows = all.slice(0, 200);
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="5" class="dim">暂无日志</td></tr>';
@@ -600,19 +559,33 @@ function esc(s) {
 
 // ---------- 事件绑定与启动 ----------
 document.addEventListener('DOMContentLoaded', () => {
+  // 登录（登录页保持不变）
   $('login-btn').addEventListener('click', doLogin);
   $('login-reset').addEventListener('click', () => { $('login-user').value = 'admin'; $('login-pass').value = ''; $('login-msg').textContent = ''; });
   $('login-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 
-  $('logout-btn').addEventListener('click', doLogout);
-  $('pause-btn').addEventListener('click', togglePause);
-  $('cfg-save').addEventListener('click', saveConfig);
-  $('cfg-reload').addEventListener('click', loadConfig);
-  $('cfg-reset').addEventListener('click', resetConfig);
+  // 主导航：文字链接切换页面
+  for (const link of document.querySelectorAll('.navlink')) {
+    link.addEventListener('click', (e) => { e.preventDefault(); switchPage(link.dataset.page); });
+  }
+
+  // 各配置页：保存 / 还原本页
+  for (const btn of document.querySelectorAll('[data-save]')) {
+    btn.addEventListener('click', () => savePage(btn.dataset.save));
+  }
+  for (const btn of document.querySelectorAll('[data-reload]')) {
+    btn.addEventListener('click', () => reloadPage(btn.dataset.reload));
+  }
+
+  $('logout-link').addEventListener('click', (e) => { e.preventDefault(); doLogout(); });
+  $('pause-link').addEventListener('click', (e) => { e.preventDefault(); togglePause(); });
   $('relay-send').addEventListener('click', relaySend);
   $('log-clear').addEventListener('click', () => { localLogs = []; renderLogs(); });
 
-  // 启动：探测登录态（/api/health 401 → 登录页；200 → 进控制台）
+  tickClock();
+  setInterval(tickClock, 1000);
+
+  // 启动：探测登录态
   fetch('/api/health')
     .then((r) => (r.ok ? enterConsole('admin') : showLogin('')))
     .catch(() => showLogin('服务未连接'));

@@ -1,44 +1,49 @@
 /* ============================================================
-   cxu-chathub 控制台 —— Windows 95/98 风格样式
-   原则：无圆角、无现代阴影、无现代配色；凹凸全靠双色调 border。
+   cxu-chathub 控制台 —— 1999 年企业内部管理网页风格
+   文档流排版：表格 + hr + 文字链接导航。禁 Flex/Grid/圆角/现代阴影。
+   字体锁定：中文宋体 SimSun 12px，英文 Tahoma 11px。
    ============================================================ */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-html { background: #008080; } /* 经典桌面青绿 */
-
 body {
-  font-family: Tahoma, "MS Sans Serif", "SimSun", "宋体", serif;
+  background: #008080;                       /* 深青桌面 */
+  font-family: "SimSun", "宋体", serif;       /* 中文宋体 12px */
   font-size: 12px;
   color: #000;
   width: 800px;
   margin: 0 auto;
-  padding: 8px 0 16px;
+  padding: 6px 0 10px;
 }
 
+/* 英文/等宽场合用 Tahoma 11px */
+input, select, textarea, button, .mono, .banner-time, .statusbar, .foot {
+  font-family: Tahoma, "MS Sans Serif", "SimSun", "宋体", sans-serif;
+  font-size: 11px;
+}
 .mono { font-family: "Courier New", monospace; }
 .hidden { display: none !important; }
 .dim { color: #666; }
 
-/* ---------- 顶部小字 ---------- */
-.topnote {
-  color: #c0c0c0; font-size: 11px; text-align: center; margin-bottom: 6px;
-  font-family: Tahoma, "MS Sans Serif", sans-serif;
-}
+/* ---------- 链接：蓝下划线，访问过变紫 ---------- */
+a:link { color: #0000ee; text-decoration: underline; }
+a:visited { color: #551a8b; text-decoration: underline; }
+a:active { color: #ff0000; }
+.banner-title a:link, .banner-title a:visited { color: #ffff00; font-size: 16px; font-weight: bold; }
 
-/* ---------- 窗口骨架 ---------- */
+/* ---------- 登录窗口（保留原样） ---------- */
+.login-wrap { padding-top: 90px; text-align: center; }
 .win {
-  background: #c0c0c0;
-  border: 2px solid;
-  border-color: #ffffff #808080 #808080 #ffffff;   /* 外凸：左上白、右下灰 */
-  box-shadow: 1px 1px 0 0 #000;                    /* 硬边投影（1px 黑，非现代柔和阴影） */
+  background: #c0c0c0; text-align: left;
+  border: 2px solid; border-color: #ffffff #808080 #808080 #ffffff;
+  box-shadow: 1px 1px 0 0 #000;
 }
-
+.login-win { width: 340px; margin: 0 auto; }
+.login-foot { color: #c0c0c0; font-size: 11px; margin-top: 10px; }
 .titlebar {
   background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
   color: #fff; font-weight: bold; font-size: 12px;
-  padding: 3px 4px; display: flex; align-items: center; gap: 4px;
-  user-select: none;
+  padding: 3px 4px; display: flex; align-items: center; gap: 4px; user-select: none;
 }
 .tb-icon { font-size: 11px; }
 .tb-text { flex: 1; }
@@ -47,178 +52,146 @@ body {
   width: 16px; height: 14px; line-height: 12px; text-align: center;
   background: #c0c0c0; color: #000; font-size: 10px; font-weight: bold;
   border: 2px solid; border-color: #ffffff #808080 #808080 #ffffff;
-  font-family: Tahoma, sans-serif; cursor: default;
 }
 .tb-btn:active { border-color: #808080 #ffffff #ffffff #808080; }
-
 .win-body { padding: 10px 12px; }
-
-/* ---------- 95 按钮 ---------- */
-.btn95 {
-  font-family: Tahoma, "SimSun", "宋体", sans-serif; font-size: 12px;
-  background: #c0c0c0; color: #000; padding: 3px 14px; min-width: 60px;
-  border: 2px solid;
-  border-color: #ffffff #808080 #808080 #ffffff;   /* 凸起 */
-  cursor: pointer;
-}
-.btn95:active {
-  border-color: #808080 #ffffff #ffffff #808080;   /* 按下凹陷 */
-  padding: 4px 13px 2px 15px;                       /* 文字位移模拟按压 */
-}
-.btn95.btn-def { font-weight: bold; outline: 1px solid #000; outline-offset: -4px; }
-.btn95.btn-sm { min-width: 0; padding: 2px 8px; }
-.btn95:disabled { color: #808080; text-shadow: 1px 1px 0 #fff; cursor: default; }
-
-/* ---------- 输入控件（内凹） ---------- */
-input[type="text"], input[type="password"], input[type="number"], select, textarea {
-  font-family: Tahoma, "SimSun", "宋体", monospace; font-size: 12px;
-  background: #fff; color: #000; padding: 2px 3px;
-  border: 2px solid;
-  border-color: #808080 #ffffff #ffffff #808080;   /* 内凹 */
-}
-input:focus, select:focus, textarea:focus { outline: none; background: #fffff0; }
-input[type="checkbox"] { width: 13px; height: 13px; accent-color: #000080; }
-
-/* ---------- 登录 ---------- */
-.login-wrap { padding-top: 90px; text-align: center; }
-.login-win { width: 340px; margin: 0 auto; text-align: left; }
-.login-foot { color: #c0c0c0; font-size: 11px; margin-top: 10px; }
 .form-table { border-collapse: collapse; }
 .form-table td { padding: 4px 6px; }
 .form-table .lbl { text-align: right; white-space: nowrap; }
 .login-msg { color: #a00; min-height: 16px; padding: 4px 6px 0; }
 
-/* ---------- 主窗口 ---------- */
-.main-win { padding-bottom: 6px; }
+/* ---------- 顶部通栏 Banner ---------- */
+table.banner { background: #004040; border: 2px solid; border-color: #ffffff #000000 #000000 #ffffff; }
+.banner-title { color: #ffff00; }
+.banner-title a:link, .banner-title a:visited { color: #ffff00; }
+.banner-sub { color: #c0e8e8; font-size: 12px; font-family: "SimSun", "宋体", serif; }
+.banner-time { color: #c0e8e8; line-height: 1.6; }
 
-.announce-row {
-  display: flex; align-items: center; background: #c0c0c0;
-  border-bottom: 1px solid #808080; padding: 2px 4px;
-}
-.announce-tag {
-  background: #000080; color: #fff; font-size: 11px; font-weight: bold;
-  padding: 1px 6px; margin-right: 6px;
-}
-.announce-row marquee { flex: 1; font-size: 12px; color: #000; }
+/* ---------- 公告跑马灯 ---------- */
+.announce-row { background: #c0c0c0; border: 1px solid #808080; margin-top: 4px; }
+.announce-tag { background: #000080; color: #fff; font-size: 11px; font-weight: bold; padding: 1px 6px; margin-right: 6px; }
+.announce-row marquee { font-size: 12px; color: #000; }
 .announce-row marquee.ok { color: #006000; }
 .announce-row marquee.down { color: #a00000; font-weight: bold; }
 
-.session-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 4px 8px; font-size: 12px; border-bottom: 1px solid #808080;
-  background: #d4d0c8;
+/* ---------- 文字链接主导航 ---------- */
+hr { border: none; border-top: 1px solid #808080; border-bottom: 1px solid #ffffff; margin: 4px 0; }
+.navbar {
+  background: #c0c0c0; padding: 3px 4px; font-size: 12px;
+  border: 1px solid; border-color: #ffffff #808080 #808080 #ffffff;
 }
-.session-row .spacer { flex: 1; }
+.navbar a { font-weight: bold; }
+.navbar a.current { color: #a00000; text-decoration: none; background: #d4d0c8; padding: 0 4px; border: 1px solid #808080; }
 
-.main-cols { display: flex; gap: 8px; padding: 8px; align-items: flex-start; }
-.col-left { width: 480px; flex: 0 0 480px; }
-.col-right { flex: 1; min-width: 0; }
-.bottom-cols { display: flex; gap: 8px; padding: 0 8px 8px; align-items: flex-start; }
-.bottom-cols > fieldset:first-child { flex: 1; min-width: 0; }
-.bottom-cols > fieldset:last-child { width: 300px; flex: 0 0 300px; }
-
-/* ---------- fieldset 分组 ---------- */
-.group95 {
+/* ---------- 页面容器与 fieldset（深灰 3D 边框） ---------- */
+.page { margin-top: 6px; }
+fieldset.cfg95 {
   border: 2px solid;
-  border-color: #808080 #ffffff #ffffff #808080;   /* 内凹容器（95 惯例） */
-  background: #c0c0c0; padding: 8px; margin-bottom: 8px;
+  border-color: #ffffff #404040 #404040 #ffffff;   /* 深灰 3D：右下深灰 */
+  background: #c0c0c0; padding: 6px 8px 8px; margin-bottom: 6px;
 }
-.group95 > legend {
-  font-weight: bold; color: #000080; padding: 0 4px;
-  background: #c0c0c0; border: 1px solid #808080;
+fieldset.cfg95 > legend { font-weight: bold; color: #000080; padding: 0 4px; }
+
+/* ---------- 配置表单（紧凑高密度） ---------- */
+table.plain, table.info-table { border-collapse: collapse; }
+table.plain td, table.info-table td { padding: 2px 4px; }
+.lbl { text-align: right; white-space: nowrap; color: #000; }
+
+table.cfg-table { border-collapse: collapse; }
+table.cfg-table td { padding: 2px 4px; vertical-align: middle; }
+table.cfg-table td.lbl { width: 150px; }
+table.cfg-table input[type="text"], table.cfg-table input[type="password"], table.cfg-table input[type="number"] { width: 98%; }
+table.cfg-table input.short { width: 90px; }
+input.short { width: 90px; }
+
+/* 输入控件：深灰边框、内凹、直角 */
+input[type="text"], input[type="password"], input[type="number"], select, textarea {
+  font-family: Tahoma, "MS Sans Serif", "SimSun", "宋体", sans-serif;
+  font-size: 11px;
+  background: #fff; color: #000; padding: 2px 3px;
+  border: 2px solid; border-color: #404040 #ffffff #ffffff #404040;   /* 深灰内凹 */
 }
+input:focus, select:focus, textarea:focus { outline: none; background: #fffff0; }
+input[type="checkbox"] { width: 13px; height: 13px; }
 
-/* ---------- 配置表单 ---------- */
-.cfg-actions { display: flex; gap: 6px; margin-bottom: 6px; }
-.cfg-msg { min-height: 18px; font-size: 12px; margin-bottom: 4px; }
-.cfg-msg.err { color: #a00000; font-weight: bold; }
-.cfg-msg.ok { color: #006000; }
-
-fieldset.inner {
-  border: 1px solid; border-color: #808080 #ffffff #ffffff #808080;
-  margin: 0 0 8px; padding: 6px;
+/* 按钮：灰底凸起，按下凹陷 */
+.btn95 {
+  font-family: Tahoma, "SimSun", "宋体", sans-serif; font-size: 11px;
+  background: #c0c0c0; color: #000; padding: 3px 14px; min-width: 60px;
+  border: 2px solid; border-color: #ffffff #404040 #404040 #ffffff;
+  cursor: pointer;
 }
-fieldset.inner legend { font-size: 11px; color: #000; padding: 0 4px; font-weight: bold; }
+.btn95:active {
+  border-color: #404040 #ffffff #ffffff #404040;
+  padding: 4px 13px 2px 15px;
+}
+.btn95.btn-def { font-weight: bold; outline: 1px solid #000; outline-offset: -4px; }
 
-.cfg-table { border-collapse: collapse; width: 100%; }
-.cfg-table td { padding: 2px 4px; vertical-align: middle; }
-.cfg-table .lbl { width: 150px; text-align: right; white-space: nowrap; }
-.cfg-table input[type="text"], .cfg-table input[type="password"], .cfg-table input[type="number"] { width: 100%; }
-.cfg-table input.short { width: 90px; }
-.cfg-sec { font-size: 11px; color: #000080; font-weight: bold; padding-top: 6px; }
-
-.secret-cell { white-space: nowrap; }
-.secret-state { font-weight: bold; }
-.secret-state.set { color: #006000; }
-.secret-state.unset { color: #808080; }
+.page-actions { margin: 2px 0 10px; }
+.page-actions .pagemsg { margin-left: 8px; }
+.pagemsg.err { color: #a00000; font-weight: bold; }
+.pagemsg.ok { color: #006000; font-weight: bold; }
 
 /* ---------- 分段进度条 ---------- */
-.restart-progress { margin: 4px 0 8px; }
+.seg-wrap { margin: 4px 0 8px; }
 .seg-bar {
-  height: 16px; border: 2px solid;
-  border-color: #808080 #ffffff #ffffff #808080;
-  background: #fff; padding: 1px; display: flex; gap: 1px; overflow: hidden;
+  width: 60%; height: 14px; padding: 1px; display: flex; gap: 1px; overflow: hidden;
+  border: 2px solid; border-color: #404040 #ffffff #ffffff #404040; background: #fff;
 }
-.seg-bar i {
-  flex: 1; background: transparent; min-width: 6px;
-}
+.seg-bar i { flex: 1; min-width: 5px; }
 .seg-bar.on i { background: #000080; }
-.seg-bar i:nth-child(even) { visibility: hidden; }
-.seg-bar.on i:nth-child(even) { visibility: visible; }
-#restart-text { font-size: 11px; color: #000080; padding-top: 2px; }
+.seg-text { font-size: 11px; color: #000080; padding-top: 2px; }
 
-/* ---------- LED 状态灯（方块 + 高光） ---------- */
-.led-table { border-collapse: collapse; margin-bottom: 6px; }
-.led-table td { padding: 3px 4px; font-size: 12px; }
-.led-cell { width: 24px; text-align: center; }
+/* ---------- LED 状态灯（CSS 方块 + 左上高光，无 emoji） ---------- */
 .led {
-  display: inline-block; width: 12px; height: 12px;
-  background: #404040;
+  display: inline-block; width: 12px; height: 12px; background: #404040;
   border: 1px solid; border-color: #808080 #ffffff #ffffff #808080;
-  position: relative;
+  position: relative; vertical-align: middle;
 }
-.led::after {  /* 高光：左上角白色小方块 */
-  content: ""; position: absolute; left: 1px; top: 1px; width: 4px; height: 4px; background: #fff;
-}
+.led::after { content: ""; position: absolute; left: 1px; top: 1px; width: 4px; height: 4px; background: #fff; }
 .led.green { background: #00a000; }
 .led.red { background: #e00000; }
-.led.yellow { background: #d0c000; }
-.led-off { background: #404040; }
 .led-off::after { background: #909090; }
 
-/* ---------- 子系统 / 信息表 ---------- */
-.subsys-list { max-height: 130px; overflow-y: auto; border: 1px solid #808080; background: #fff; padding: 2px; }
-.subsys-row { font-size: 11px; padding: 1px 3px; display: flex; gap: 4px; align-items: center; }
-.subsys-row:nth-child(even) { background: #f0f0f0; }
-.subsys-row .sname { font-weight: bold; width: 120px; }
-.subsys-row .sdetail { flex: 1; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.info-table { border-collapse: collapse; width: 100%; font-size: 12px; }
-.info-table td { padding: 2px 4px; border-bottom: 1px dotted #a0a0a0; }
-.info-table td:first-child { color: #000080; width: 70px; }
-
-/* ---------- 消息表 / 日志表 ---------- */
-.msg-scroll, .log-scroll { height: 150px; overflow-y: auto; border: 2px solid; border-color: #808080 #ffffff #ffffff #808080; background: #fff; }
-.msg-table, .log-table { border-collapse: collapse; width: 100%; font-size: 12px; }
-.msg-table th, .log-table th {
-  position: sticky; top: 0; background: #c0c0c0; text-align: left;
-  font-weight: bold; padding: 2px 4px; border-right: 1px solid #808080; border-bottom: 2px solid;
-  border-color: #ffffff #808080 #808080 #ffffff;
+/* ---------- 子系统健康 / 系统信息 ---------- */
+.subsys-box {
+  border: 2px solid; border-color: #404040 #ffffff #ffffff #404040;
+  background: #fff; height: 96px; overflow-y: auto; padding: 2px;
 }
-.msg-table td, .log-table td { padding: 2px 4px; border-bottom: 1px dotted #c0c0c0; vertical-align: top; }
-.msg-table tr:nth-child(even), .log-table tr:nth-child(even) { background: #f4f4f0; }
-.src-tag { display: inline-block; background: #000080; color: #fff; font-size: 10px; padding: 0 4px; }
+.subsys-row { padding: 1px 3px; }
+.subsys-row:nth-child(even) { background: #f0f0f0; }
+.subsys-row .sname { font-weight: bold; }
+.subsys-row .sdetail { color: #333; }
+
+table.info-table td { border-bottom: 1px dotted #808080; color: #000; }
+table.info-table td.mono { color: #000080; }
+
+/* ---------- 消息 / 日志表格 ---------- */
+.msg-scroll {
+  height: 160px; overflow-y: auto; background: #fff;
+  border: 2px solid; border-color: #404040 #ffffff #ffffff #404040;
+}
+table.msg-table { border-collapse: collapse; width: 100%; }
+table.msg-table th {
+  position: sticky; top: 0; background: #c0c0c0; text-align: left; font-weight: bold;
+  padding: 2px 4px; border-bottom: 2px solid; border-color: #ffffff #404040 #404040 #ffffff;
+}
+table.msg-table td { padding: 2px 4px; border-bottom: 1px dotted #c0c0c0; vertical-align: top; }
+table.msg-table tr:nth-child(even) { background: #f4f4f0; }
+.src-tag { display: inline-block; background: #000080; color: #fff; font-size: 10px; padding: 0 4px; font-family: Tahoma, sans-serif; }
 .log-result-ok { color: #006000; }
 .log-result-err { color: #a00000; font-weight: bold; }
-.relay-result { font-size: 12px; margin-left: 8px; }
+.relay-result { margin-left: 8px; }
 .relay-result.ok { color: #006000; font-weight: bold; }
 .relay-result.err { color: #a00000; font-weight: bold; }
 
-/* ---------- 底部状态栏 ---------- */
-.statusbar {
-  display: flex; margin: 6px 2px 2px; font-size: 11px;
-  border: 2px solid; border-color: #808080 #ffffff #ffffff #808080;  /* 内凹 */
+/* ---------- 底部通栏状态栏 ---------- */
+table.statusbar {
   background: #c0c0c0;
+  border: 2px solid; border-color: #808080 #ffffff #ffffff #808080;   /* 内凹 */
 }
-.sb-cell { padding: 2px 8px; border-right: 1px solid #808080; white-space: nowrap; }
-.sb-cell.grow { flex: 1; border-right: none; }
+.statusbar td { padding: 2px 6px; }
+
+/* ---------- 版权 ---------- */
+.foot { color: #c0e8e8; font-size: 11px; }
+.foot a:link, .foot a:visited { color: #ffff00; }

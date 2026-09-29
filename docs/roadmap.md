@@ -107,13 +107,21 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
 - 待定项维持：`/patch` 手动重发命令未实现；单篇原文直链未做（minecraft.net
   文章 slug 不可稳定推导，链接节点统一指向官方总览页）
 
-## v0.5+ —— Web UI（2026-09-28 用户提出，未设计）
+## v0.5+ —— Web 控制台（2026-09-29 完成首版：`webui/`）
 
-- [ ] 基于 HTTP API 底座做社区状态与消息查看面板：读接口 `/api/status`
-      （含 capabilities 能力清单）、`/api/messages`（近期消息环形缓冲）已就绪，
-      写接口 `/api/relay`（token 保护）可用于发送消息；CORS 已全路由放开。
-      部署与接入路径（反代 `/api/*` → 8199、token 不下发浏览器）见
-      `docs/api-design.md`；实时刷新预留 SSE（`/api/events`，数据源 RecentLog）。
+- [x] **中间层后端**（Node.js + Express，`webui/server.js`）：登录鉴权（内存会话 +
+      登录限速）、config.json 读写（敏感字段脱敏下发 `{is_set}`、保存空值保留原值、
+      按结构校验、挂载点检测 + 原子落盘——单文件 bind mount 自动原地写保证
+      restart 可见）、/api/status|health|messages|relay 代理（token 后端注入）、
+      SSE 状态推送（2s）、操作日志（不含敏感值，200 条）
+- [x] **前端**（原生 HTML/CSS/JS，无框架）：Win95/98 风格控制台——配置面板
+      （按 config 顶层字段分组、敏感字段「已设置/未设置 + 修改」）、状态监视
+      （LED + 子系统健康 + 计数，SSE 断线回退轮询）、消息列表、relay 下发、
+      操作日志；800px 定宽居中
+- [ ] **线上部署**：主 compose 补 `127.0.0.1:8199:8199` 映射 + `webui/docker-compose.yml`
+      起 console（挂 config.json 读写 + docker.sock），步骤见 `webui/README.md`
+- [ ] **可选增强**：消息实时推送（SSE 数据源换主服务 `/api/events`）、反代 TLS、
+      多用户审计
 
 ## 更远
 

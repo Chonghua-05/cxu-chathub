@@ -1,0 +1,40 @@
+# ============================================================
+# cxu-chathub Web 控制台（独立部署）
+#
+# 前置条件（一次性，改主 docker-compose.yml）：
+#   1. 给主服务容器补一行端口映射（api-design.md 的既定路径）：
+#        - "127.0.0.1:8199:8199"
+#   2. config.json 保持单文件挂载不变；本控制台以【读写】挂载同一文件，
+#      检测到挂载点时会原地写入（保持 inode），docker restart 后容器可读到新配置
+#   3. 挂载 /var/run/docker.sock 供控制台执行 docker restart
+#
+# 安全：9090 只绑回环；对外务必走反代加 TLS
+# ============================================================
+services:
+  console:
+    build: .
+    image: cxu-chathub-console:latest
+    container_name: cxu-console
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      # 读写挂载同一份 config.json（与主容器的只读挂载指向宿主机同一文件）
+      - /opt/cxu-chathub/config.json:/data/config.json
+      # docker restart 主容器需要
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=9090
+      - CXU_ADMIN_USER=${CXU_ADMIN_USER:-admin}
+      - CXU_ADMIN_PASSWORD=${CXU_ADMIN_PASSWORD:?请在 .env 里设置管理密码}
+      - CXU_CONFIG_PATH=/data/config.json
+      - CXU_API_URL=${CXU_API_URL:-http://127.0.0.1:8199}
+      - CXU_HEALTH_URL=${CXU_HEALTH_URL:-http://127.0.0.1:6199/healthz}
+      - CXU_CONTAINER_NAME=${CXU_CONTAINER_NAME:-chatroom-bridge-rust}
+      - CXU_DOCKER_ENABLED=${CXU_DOCKER_ENABLED:-true}
+      - TZ=Asia/Shanghai
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"

@@ -1,0 +1,16 @@
+{
+  "name": "cxu-chathub-console",
+  "version": "1.0.0",
+  "description": "cxu-chathub Web 控制台中间层：配置管理 + 状态监控 + 服务重启",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "license": "MIT"
+}

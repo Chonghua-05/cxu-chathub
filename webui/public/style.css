@@ -1,0 +1,224 @@
+/* ============================================================
+   cxu-chathub 控制台 —— Windows 95/98 风格样式
+   原则：无圆角、无现代阴影、无现代配色；凹凸全靠双色调 border。
+   ============================================================ */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { background: #008080; } /* 经典桌面青绿 */
+
+body {
+  font-family: Tahoma, "MS Sans Serif", "SimSun", "宋体", serif;
+  font-size: 12px;
+  color: #000;
+  width: 800px;
+  margin: 0 auto;
+  padding: 8px 0 16px;
+}
+
+.mono { font-family: "Courier New", monospace; }
+.hidden { display: none !important; }
+.dim { color: #666; }
+
+/* ---------- 顶部小字 ---------- */
+.topnote {
+  color: #c0c0c0; font-size: 11px; text-align: center; margin-bottom: 6px;
+  font-family: Tahoma, "MS Sans Serif", sans-serif;
+}
+
+/* ---------- 窗口骨架 ---------- */
+.win {
+  background: #c0c0c0;
+  border: 2px solid;
+  border-color: #ffffff #808080 #808080 #ffffff;   /* 外凸：左上白、右下灰 */
+  box-shadow: 1px 1px 0 0 #000;                    /* 硬边投影（1px 黑，非现代柔和阴影） */
+}
+
+.titlebar {
+  background: linear-gradient(90deg, #000080 0%, #1084d0 100%);
+  color: #fff; font-weight: bold; font-size: 12px;
+  padding: 3px 4px; display: flex; align-items: center; gap: 4px;
+  user-select: none;
+}
+.tb-icon { font-size: 11px; }
+.tb-text { flex: 1; }
+.tb-btns { display: flex; gap: 2px; }
+.tb-btn {
+  width: 16px; height: 14px; line-height: 12px; text-align: center;
+  background: #c0c0c0; color: #000; font-size: 10px; font-weight: bold;
+  border: 2px solid; border-color: #ffffff #808080 #808080 #ffffff;
+  font-family: Tahoma, sans-serif; cursor: default;
+}
+.tb-btn:active { border-color: #808080 #ffffff #ffffff #808080; }
+
+.win-body { padding: 10px 12px; }
+
+/* ---------- 95 按钮 ---------- */
+.btn95 {
+  font-family: Tahoma, "SimSun", "宋体", sans-serif; font-size: 12px;
+  background: #c0c0c0; color: #000; padding: 3px 14px; min-width: 60px;
+  border: 2px solid;
+  border-color: #ffffff #808080 #808080 #ffffff;   /* 凸起 */
+  cursor: pointer;
+}
+.btn95:active {
+  border-color: #808080 #ffffff #ffffff #808080;   /* 按下凹陷 */
+  padding: 4px 13px 2px 15px;                       /* 文字位移模拟按压 */
+}
+.btn95.btn-def { font-weight: bold; outline: 1px solid #000; outline-offset: -4px; }
+.btn95.btn-sm { min-width: 0; padding: 2px 8px; }
+.btn95:disabled { color: #808080; text-shadow: 1px 1px 0 #fff; cursor: default; }
+
+/* ---------- 输入控件（内凹） ---------- */
+input[type="text"], input[type="password"], input[type="number"], select, textarea {
+  font-family: Tahoma, "SimSun", "宋体", monospace; font-size: 12px;
+  background: #fff; color: #000; padding: 2px 3px;
+  border: 2px solid;
+  border-color: #808080 #ffffff #ffffff #808080;   /* 内凹 */
+}
+input:focus, select:focus, textarea:focus { outline: none; background: #fffff0; }
+input[type="checkbox"] { width: 13px; height: 13px; accent-color: #000080; }
+
+/* ---------- 登录 ---------- */
+.login-wrap { padding-top: 90px; text-align: center; }
+.login-win { width: 340px; margin: 0 auto; text-align: left; }
+.login-foot { color: #c0c0c0; font-size: 11px; margin-top: 10px; }
+.form-table { border-collapse: collapse; }
+.form-table td { padding: 4px 6px; }
+.form-table .lbl { text-align: right; white-space: nowrap; }
+.login-msg { color: #a00; min-height: 16px; padding: 4px 6px 0; }
+
+/* ---------- 主窗口 ---------- */
+.main-win { padding-bottom: 6px; }
+
+.announce-row {
+  display: flex; align-items: center; background: #c0c0c0;
+  border-bottom: 1px solid #808080; padding: 2px 4px;
+}
+.announce-tag {
+  background: #000080; color: #fff; font-size: 11px; font-weight: bold;
+  padding: 1px 6px; margin-right: 6px;
+}
+.announce-row marquee { flex: 1; font-size: 12px; color: #000; }
+.announce-row marquee.ok { color: #006000; }
+.announce-row marquee.down { color: #a00000; font-weight: bold; }
+
+.session-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 4px 8px; font-size: 12px; border-bottom: 1px solid #808080;
+  background: #d4d0c8;
+}
+.session-row .spacer { flex: 1; }
+
+.main-cols { display: flex; gap: 8px; padding: 8px; align-items: flex-start; }
+.col-left { width: 480px; flex: 0 0 480px; }
+.col-right { flex: 1; min-width: 0; }
+.bottom-cols { display: flex; gap: 8px; padding: 0 8px 8px; align-items: flex-start; }
+.bottom-cols > fieldset:first-child { flex: 1; min-width: 0; }
+.bottom-cols > fieldset:last-child { width: 300px; flex: 0 0 300px; }
+
+/* ---------- fieldset 分组 ---------- */
+.group95 {
+  border: 2px solid;
+  border-color: #808080 #ffffff #ffffff #808080;   /* 内凹容器（95 惯例） */
+  background: #c0c0c0; padding: 8px; margin-bottom: 8px;
+}
+.group95 > legend {
+  font-weight: bold; color: #000080; padding: 0 4px;
+  background: #c0c0c0; border: 1px solid #808080;
+}
+
+/* ---------- 配置表单 ---------- */
+.cfg-actions { display: flex; gap: 6px; margin-bottom: 6px; }
+.cfg-msg { min-height: 18px; font-size: 12px; margin-bottom: 4px; }
+.cfg-msg.err { color: #a00000; font-weight: bold; }
+.cfg-msg.ok { color: #006000; }
+
+fieldset.inner {
+  border: 1px solid; border-color: #808080 #ffffff #ffffff #808080;
+  margin: 0 0 8px; padding: 6px;
+}
+fieldset.inner legend { font-size: 11px; color: #000; padding: 0 4px; font-weight: bold; }
+
+.cfg-table { border-collapse: collapse; width: 100%; }
+.cfg-table td { padding: 2px 4px; vertical-align: middle; }
+.cfg-table .lbl { width: 150px; text-align: right; white-space: nowrap; }
+.cfg-table input[type="text"], .cfg-table input[type="password"], .cfg-table input[type="number"] { width: 100%; }
+.cfg-table input.short { width: 90px; }
+.cfg-sec { font-size: 11px; color: #000080; font-weight: bold; padding-top: 6px; }
+
+.secret-cell { white-space: nowrap; }
+.secret-state { font-weight: bold; }
+.secret-state.set { color: #006000; }
+.secret-state.unset { color: #808080; }
+
+/* ---------- 分段进度条 ---------- */
+.restart-progress { margin: 4px 0 8px; }
+.seg-bar {
+  height: 16px; border: 2px solid;
+  border-color: #808080 #ffffff #ffffff #808080;
+  background: #fff; padding: 1px; display: flex; gap: 1px; overflow: hidden;
+}
+.seg-bar i {
+  flex: 1; background: transparent; min-width: 6px;
+}
+.seg-bar.on i { background: #000080; }
+.seg-bar i:nth-child(even) { visibility: hidden; }
+.seg-bar.on i:nth-child(even) { visibility: visible; }
+#restart-text { font-size: 11px; color: #000080; padding-top: 2px; }
+
+/* ---------- LED 状态灯（方块 + 高光） ---------- */
+.led-table { border-collapse: collapse; margin-bottom: 6px; }
+.led-table td { padding: 3px 4px; font-size: 12px; }
+.led-cell { width: 24px; text-align: center; }
+.led {
+  display: inline-block; width: 12px; height: 12px;
+  background: #404040;
+  border: 1px solid; border-color: #808080 #ffffff #ffffff #808080;
+  position: relative;
+}
+.led::after {  /* 高光：左上角白色小方块 */
+  content: ""; position: absolute; left: 1px; top: 1px; width: 4px; height: 4px; background: #fff;
+}
+.led.green { background: #00a000; }
+.led.red { background: #e00000; }
+.led.yellow { background: #d0c000; }
+.led-off { background: #404040; }
+.led-off::after { background: #909090; }
+
+/* ---------- 子系统 / 信息表 ---------- */
+.subsys-list { max-height: 130px; overflow-y: auto; border: 1px solid #808080; background: #fff; padding: 2px; }
+.subsys-row { font-size: 11px; padding: 1px 3px; display: flex; gap: 4px; align-items: center; }
+.subsys-row:nth-child(even) { background: #f0f0f0; }
+.subsys-row .sname { font-weight: bold; width: 120px; }
+.subsys-row .sdetail { flex: 1; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.info-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.info-table td { padding: 2px 4px; border-bottom: 1px dotted #a0a0a0; }
+.info-table td:first-child { color: #000080; width: 70px; }
+
+/* ---------- 消息表 / 日志表 ---------- */
+.msg-scroll, .log-scroll { height: 150px; overflow-y: auto; border: 2px solid; border-color: #808080 #ffffff #ffffff #808080; background: #fff; }
+.msg-table, .log-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.msg-table th, .log-table th {
+  position: sticky; top: 0; background: #c0c0c0; text-align: left;
+  font-weight: bold; padding: 2px 4px; border-right: 1px solid #808080; border-bottom: 2px solid;
+  border-color: #ffffff #808080 #808080 #ffffff;
+}
+.msg-table td, .log-table td { padding: 2px 4px; border-bottom: 1px dotted #c0c0c0; vertical-align: top; }
+.msg-table tr:nth-child(even), .log-table tr:nth-child(even) { background: #f4f4f0; }
+.src-tag { display: inline-block; background: #000080; color: #fff; font-size: 10px; padding: 0 4px; }
+.log-result-ok { color: #006000; }
+.log-result-err { color: #a00000; font-weight: bold; }
+.relay-result { font-size: 12px; margin-left: 8px; }
+.relay-result.ok { color: #006000; font-weight: bold; }
+.relay-result.err { color: #a00000; font-weight: bold; }
+
+/* ---------- 底部状态栏 ---------- */
+.statusbar {
+  display: flex; margin: 6px 2px 2px; font-size: 11px;
+  border: 2px solid; border-color: #808080 #ffffff #ffffff #808080;  /* 内凹 */
+  background: #c0c0c0;
+}
+.sb-cell { padding: 2px 8px; border-right: 1px solid #808080; white-space: nowrap; }
+.sb-cell.grow { flex: 1; border-right: none; }

@@ -177,6 +177,13 @@ PYTHONPATH=src .venv/bin/python -m pytest -q tests
 - HTTP 服务只绑宿主机回环 `127.0.0.1:6199`，不对外暴露端口。
 - 端口 `6199` 若被旧框架容器占用，需先停掉旧框架（见部署文档）。
 
+## Web 控制台
+
+`webui/` 提供 Win95 风格的配置管理与状态监视控制台（Node.js 中间层 + 原生 JS 前端）：
+读写 `config.json`（敏感字段脱敏、空值保留原值、写入后自动重启服务并轮询就绪）、
+代理状态 / 消息 / relay 接口（token 不下发浏览器）、SSE 实时状态。部署见
+[`webui/README.md`](webui/README.md)。
+
 ---
 
 ## Roadmap

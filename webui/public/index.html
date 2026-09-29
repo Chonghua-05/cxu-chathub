@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=800">
+<title>cxu-chathub 控制台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="topnote">最佳浏览 IE5.0 / Netscape 4.0 · 1024×768 · 800×600 及以上</div>
+
+<!-- ==================== 登录窗口 ==================== -->
+<div id="login-screen" class="login-wrap">
+  <div class="win login-win">
+    <div class="titlebar">
+      <span class="tb-icon">🔐</span><span class="tb-text">登录 - cxu-chathub 控制台</span>
+      <span class="tb-btns"><span class="tb-btn">_</span><span class="tb-btn">□</span><span class="tb-btn">✕</span></span>
+    </div>
+    <div class="win-body">
+      <table class="form-table">
+        <tr>
+          <td class="lbl">用户名：</td>
+          <td><input type="text" id="login-user" autocomplete="username" value="admin"></td>
+        </tr>
+        <tr>
+          <td class="lbl">密　码：</td>
+          <td><input type="password" id="login-pass" autocomplete="current-password"></td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>
+            <button class="btn95 btn-def" id="login-btn">确 定</button>
+            <button class="btn95" id="login-reset">重 置</button>
+          </td>
+        </tr>
+      </table>
+      <div id="login-msg" class="login-msg"></div>
+    </div>
+  </div>
+  <div class="login-foot">© 1999 cxu-chathub 控制台</div>
+</div>
+
+<!-- ==================== 主控制台 ==================== -->
+<div id="console" class="hidden">
+
+  <div class="win main-win">
+    <div class="titlebar">
+      <span class="tb-icon">🖥</span><span class="tb-text">cxu-chathub 控制台 v1.0 - [配置管理与状态监视]</span>
+      <span class="tb-btns"><span class="tb-btn">_</span><span class="tb-btn">□</span><span class="tb-btn">✕</span></span>
+    </div>
+
+    <!-- 公告栏 -->
+    <div class="announce-row">
+      <span class="announce-tag">公告</span>
+      <marquee id="marquee" scrollamount="3">正在连接服务……</marquee>
+    </div>
+
+    <!-- 会话条 -->
+    <div class="session-row">
+      <span>用户：<b id="whoami">-</b></span>
+      <span>本次会话请求数：<b id="req-count" class="mono">0</b></span>
+      <span>状态刷新：<b id="refresh-mode" class="mono">SSE</b></span>
+      <span class="spacer"></span>
+      <button class="btn95 btn-sm" id="pause-btn">暂停刷新</button>
+      <button class="btn95 btn-sm" id="logout-btn">注销</button>
+    </div>
+
+    <!-- 主体两栏 -->
+    <div class="main-cols">
+      <!-- 左：配置面板 -->
+      <div class="col-left">
+        <fieldset class="group95">
+          <legend>服务配置（config.json）</legend>
+          <div class="cfg-actions">
+            <button class="btn95 btn-def" id="cfg-save">保存并重启服务</button>
+            <button class="btn95" id="cfg-reload">重新加载</button>
+            <button class="btn95" id="cfg-reset">恢复默认</button>
+          </div>
+          <div id="cfg-msg" class="cfg-msg"></div>
+          <div class="restart-progress hidden" id="restart-progress">
+            <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <div id="restart-text">服务正在重启，请稍候……</div>
+          </div>
+          <form id="config-form" autocomplete="off"><!-- JS 渲染各分组 fieldset --></form>
+        </fieldset>
+      </div>
+
+      <!-- 右：状态监控 + 系统信息 -->
+      <div class="col-right">
+        <fieldset class="group95">
+          <legend>状态监视</legend>
+          <table class="led-table">
+            <tr><td class="led-cell"><span class="led led-off" id="led-onebot"></span></td><td>OneBot 连接</td></tr>
+            <tr><td class="led-cell"><span class="led led-off" id="led-chatbridge"></span></td><td>ChatBridge 连接</td></tr>
+            <tr><td class="led-cell"><span class="led led-off" id="led-api"></span></td><td>HTTP API</td></tr>
+          </table>
+          <div class="dim" style="margin:4px 0 2px">子系统健康：</div>
+          <div id="subsystem-list" class="subsys-list"><div class="dim">加载中……</div></div>
+          <div class="dim" style="margin-top:6px">最后刷新：<span id="last-refresh" class="mono">-</span></div>
+        </fieldset>
+
+        <fieldset class="group95">
+          <legend>系统信息</legend>
+          <table class="info-table">
+            <tr><td>版本</td><td id="info-version" class="mono">-</td></tr>
+            <tr><td>已运行</td><td id="info-uptime" class="mono">-</td></tr>
+            <tr><td>转发成功</td><td id="info-fwd" class="mono">-</td></tr>
+            <tr><td>转发失败</td><td id="info-fail" class="mono">-</td></tr>
+            <tr><td>去重跳过</td><td id="info-dup" class="mono">-</td></tr>
+            <tr><td>去重表</td><td id="info-state" class="mono">-</td></tr>
+          </table>
+        </fieldset>
+      </div>
+    </div>
+
+    <!-- 下方：消息 + relay -->
+    <div class="bottom-cols">
+      <fieldset class="group95">
+        <legend>近期消息（最多 50 条）</legend>
+        <div class="msg-scroll">
+          <table class="msg-table" id="msg-table">
+            <thead><tr><th>时间</th><th>来源</th><th>发送者</th><th>内容</th></tr></thead>
+            <tbody><tr><td colspan="4" class="dim">加载中……</td></tr></tbody>
+          </table>
+        </div>
+      </fieldset>
+
+      <fieldset class="group95">
+        <legend>消息下发（relay）</legend>
+        <table class="form-table">
+          <tr>
+            <td class="lbl">目标：</td>
+            <td>
+              <select id="relay-target">
+                <option value="qq">QQ 群</option>
+                <option value="game">游戏内</option>
+                <option value="chatroom">chatroom 频道</option>
+              </select>
+              <span class="lbl">群号(可选)：</span>
+              <input type="text" id="relay-group" size="10" class="mono">
+            </td>
+          </tr>
+          <tr>
+            <td class="lbl">内容：</td>
+            <td><textarea id="relay-text" rows="3" style="width:100%"></textarea></td>
+          </tr>
+          <tr>
+            <td></td>
+            <td>
+              <button class="btn95 btn-def" id="relay-send">发 送</button>
+              <span id="relay-result" class="relay-result"></span>
+            </td>
+          </tr>
+        </table>
+      </fieldset>
+    </div>
+
+    <!-- 操作日志 -->
+    <fieldset class="group95">
+      <legend>操作日志（后端 <span id="log-src" class="mono">/api/logs</span>）</legend>
+      <div class="log-scroll">
+        <table class="log-table" id="log-table">
+          <thead><tr><th style="width:130px">时间</th><th style="width:70px">用户</th><th style="width:110px">操作</th><th>明细</th><th style="width:70px">结果</th></tr></thead>
+          <tbody><tr><td colspan="5" class="dim">加载中……</td></tr></tbody>
+        </table>
+      </div>
+      <div style="margin-top:4px"><button class="btn95 btn-sm" id="log-clear">清空显示</button></div>
+    </fieldset>
+  </div>
+
+  <div class="statusbar">
+    <span class="sb-cell" id="sb-conn">服务：检测中…</span>
+    <span class="sb-cell grow" id="sb-hint">就绪</span>
+    <span class="sb-cell">© 1999 cxu-chathub 控制台</span>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

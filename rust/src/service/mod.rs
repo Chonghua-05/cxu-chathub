@@ -15,7 +15,7 @@ mod qq;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
@@ -31,7 +31,7 @@ use crate::adapters::chatroom_read::{AuthTokenProvider, ChatroomReader};
 use crate::adapters::forward_api::{ForwardApi, PostMessage, PostSource};
 use crate::adapters::onebot::{GroupMessageHandler, OneBotServer};
 use crate::api::ApiServer;
-use crate::config::AppConfig;
+use crate::config::{describe, AppConfig};
 use crate::router::handlers::{QqForwardRelay, SlashCommandAdapter, SnapshotRelay};
 use crate::router::{CommandHandler, CommandInfo, CommandRouter, Hub};
 use crate::services::commands::CommandService;
@@ -135,7 +135,8 @@ pub struct BridgeService {
     server: Arc<OneBotServer>,
     chatbridge: Option<Arc<ChatBridgeClient>>,
     router: Arc<CommandRouter>,
-    group_ids: Vec<i64>,
+    /// QQ 群白名单（SIGHUP 可热更新；每条消息都读，用 RwLock 快照）。
+    group_ids: RwLock<Vec<i64>>,
     game_seq: Arc<AtomicU64>,
     /// 游戏→chatroom 写入计数（/metrics；post_game_message 成功/失败）。
     game_forward_ok: AtomicU64,
@@ -330,7 +331,7 @@ impl BridgeService {
                 commands,
                 chatbridge,
                 router: Arc::new(router),
-                group_ids,
+                group_ids: RwLock::new(group_ids),
                 game_seq,
                 game_forward_ok: AtomicU64::new(0),
                 game_forward_fail: AtomicU64::new(0),
@@ -553,6 +554,80 @@ impl BridgeService {
             }
         }
         out
+    }
+
+    /// 当前生效的 QQ 群白名单快照（SIGHUP 可热更新）。
+    fn group_ids_snapshot(&self) -> Vec<i64> {
+        self.group_ids
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// SIGHUP 热重载（最小形态，roadmap v0.4）：对比新配置与当前配置，
+    /// 只热应用可安全生效的字段，其余差异记日志提示重启。
+    ///
+    /// - **热应用**：`chatroom.group_ids` 白名单（每条消息都读，原子换快照）；
+    /// - **交给调用方**：`log_level`（logging 层在 main，返回 Some(新级别)）；
+    /// - **重启生效**：其余一切差异（端点 / token / agent 技能索引等都在装配期
+    ///   固化，热改会造成新旧状态混杂）——用打码后的 describe 摘要做字段级 diff。
+    ///
+    /// 返回 `Some(新日志级别)` 表示日志级别有变化。
+    pub fn apply_reloaded_config(&self, new_cfg: &AppConfig) -> Option<String> {
+        // 1) group_ids 白名单：热应用
+        let current = self.group_ids_snapshot();
+        let mut new_ids: Vec<i64> = new_cfg.group_ids().into_iter().collect();
+        new_ids.sort_unstable();
+        if new_ids != current {
+            info!(from = ?current, to = ?new_ids, "热重载：group_ids 白名单已更新");
+            *self.group_ids.write().unwrap_or_else(PoisonError::into_inner) = new_ids;
+        }
+
+        // 2) 日志级别：交给调用方
+        let new_level = (new_cfg.log_level != self.cfg.log_level).then(|| new_cfg.log_level.clone());
+        if let Some(level) = &new_level {
+            info!(level = %level, "热重载：日志级别将更新");
+        }
+
+        // 3) 其余差异：只提示，重启才生效
+        let mut changed = Vec::new();
+        diff_json_paths(&describe(&self.cfg), &describe(new_cfg), "", &mut changed);
+        let restart: Vec<String> = changed
+            .into_iter()
+            .filter(|path| path != "chatroom.group_ids" && path != "log_level")
+            .collect();
+        if restart.is_empty() {
+            info!("热重载：配置核对完成，变更已全部生效");
+        } else {
+            warn!(
+                fields = ?restart,
+                "热重载：以下配置变更需要重启进程才能生效（本次仍使用旧值）"
+            );
+        }
+        new_level
+    }
+}
+
+/// 递归找出两个 JSON 的差异路径（用于 describe 打码摘要的配置对比；
+/// 数组作为整体比较，路径以 `.` 连接、不带前导点）。
+fn diff_json_paths(old: &Value, new: &Value, prefix: &str, out: &mut Vec<String>) {
+    match (old, new) {
+        (Value::Object(a), Value::Object(b)) => {
+            for (key, new_value) in b {
+                let path = format!("{prefix}.{key}");
+                match a.get(key) {
+                    Some(old_value) => diff_json_paths(old_value, new_value, &path, out),
+                    None => out.push(format!("{path} (新增)")),
+                }
+            }
+            for key in a.keys() {
+                if !b.contains_key(key) {
+                    out.push(format!("{prefix}.{key} (移除)"));
+                }
+            }
+        }
+        _ if old != new => out.push(prefix.trim_start_matches('.').to_string()),
+        _ => {}
     }
 }
 
@@ -962,6 +1037,35 @@ mod tests {
         }
 
         service.stop().await;
+    }
+
+    /// SIGHUP 热重载（最小形态）：group_ids 热生效、log_level 返回给调用方、
+    /// 其余配置保持旧值（装配期固化的不热改）。
+    #[test]
+    fn sighup_reload_applies_group_ids_and_reports_log_level() {
+        let base = r#""onebot": { "listen_port": 0 },
+            "chatroom": { "base_url": "https://chatroom.example.com", "group_ids": [1] },
+            "api": { "enabled": false },
+            "log_level": "INFO""#;
+        let cfg: AppConfig = serde_json::from_str(&format!("{{ {base} }}")).unwrap();
+        let service = BridgeService::new(cfg).unwrap();
+
+        let new_cfg: AppConfig = serde_json::from_str(&format!(
+            "{{ \"onebot\": {{ \"listen_port\": 0 }},
+               \"chatroom\": {{ \"base_url\": \"https://chatroom.example.com\", \"group_ids\": [1, 2] }},
+               \"api\": {{ \"enabled\": false }},
+               \"log_level\": \"DEBUG\" }}"
+        ))
+        .unwrap();
+
+        let level = service.apply_reloaded_config(&new_cfg);
+        assert_eq!(level.as_deref(), Some("DEBUG"));
+        assert!(
+            service.group_ids_snapshot().contains(&2),
+            "group_ids 应已热更新"
+        );
+        // 端点类配置不热改：仍指向旧值
+        assert_eq!(service.cfg.chatroom.base_url, "https://chatroom.example.com");
     }
 }
 

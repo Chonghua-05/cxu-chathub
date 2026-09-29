@@ -20,7 +20,9 @@ impl BridgeService {
         conn: Arc<OneBotConnection>,
         msg: GroupMessage,
     ) {
-        if !self.group_ids.is_empty() && !self.group_ids.contains(&msg.group_id) {
+        // 空白名单 = 不限制；非空则只放行白名单群
+        let whitelist = self.group_ids_snapshot();
+        if !whitelist.is_empty() && !whitelist.contains(&msg.group_id) {
             return;
         }
         self.recent.push("qq", &msg.display_name(), &msg.text());
@@ -57,8 +59,8 @@ impl BridgeService {
             return false;
         };
         let mut sent = false;
-        for group_id in &self.group_ids {
-            match conn.send_group_text(*group_id, text).await {
+        for group_id in self.group_ids_snapshot() {
+            match conn.send_group_text(group_id, text).await {
                 Ok(_) => {
                     sent = true;
                     info!("转发到 QQ 群 {group_id}: {}", super::truncate_chars(text, 60));

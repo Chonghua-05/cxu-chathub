@@ -71,7 +71,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `enabled` | bool | `false` | agent 技能总开关 |
-| `llm` | object / null | `null` | OpenAI 兼容 `/chat/completions`：`api_url` / `api_key` / `model` / `timeout_secs`(30) / `max_answer_chars`(1000) / `system_prompt`。未配置或调用失败时自动降级为纯检索摘录 |
+| `llm` | object / null | `null` | OpenAI 兼容 `/chat/completions`：`api_url` / `api_key` / `model` / `timeout_secs`(30) / `max_answer_chars`(1000) / `system_prompt`。`api_url` 支持三种写法——根地址（自动补 `/v1/chat/completions`）、以 `/v1`..`/v4` 结尾（自动补 `/chat/completions`）、完整端点（原样）；`api_key` 留空则不发鉴权头（本地无鉴权网关可用）。api_url / model 缺失在启动装配日志即报错。未配置或调用失败时自动降级为纯检索摘录 |
 | `routing` | object | 关 | 智能路由（灰度）：`enabled`（默认 false）+ `group_ids`（灰度群白名单，空 = 不生效）——白名单群里 **@ 机器人**的不带命令前缀的自然语言消息由 LLM 路由到技能，未 @ 的消息零 LLM 开销；见 [`agent-design.md`](agent-design.md) §4 |
 | `skills[]` | list | `[]` | 命令声明：`name`（如 "mc"）、`trigger`（默认 `!{name}`）、`description`、`max_results`(5)、`sources[]` |
 | `skills[].sources[]` | list | 必填 | 三种类型见下表；可多个，结果合并并标注来源 |

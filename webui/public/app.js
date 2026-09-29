@@ -1,72 +1,75 @@
 // ============================================================
-// cxu-chathub 控制台 —— 前端逻辑（1999 年文档式页面，原生 JS）
-// 导航 = 文字链接切换 .page；每页独立保存（PUT 部分字段，后端深合并）。
+// cxu-chathub 控制台 —— 前端逻辑（原生 JS）
+// 页面 = 单张 800px 表格的行；导航切换行的显隐。
+// 表单按 schema 渲染：短字段两两一行（label 120 右对齐 + 固定 size 输入框），
+// 长字段独占一行（colspan=3）。保存 = PUT 部分字段，后端深合并。
 // ============================================================
 
 'use strict';
 
-// ---------- 配置 schema：一个分组 = 主导航的一页 ----------
+// ---------- 配置 schema：一个分组 = 导航的一页 ----------
+// half: true = 可两个并排一行；否则独占一行（colspan=3）
 const FIELD_GROUPS = {
-  onebot: { title: 'OneBot 配置', fields: [
-    { k: 'listen_host', label: '监听地址', type: 'text' },
-    { k: 'listen_port', label: '监听端口', type: 'number' },
-    { k: 'path', label: 'WS 路径', type: 'text' },
+  onebot: { title: 'OneBot配置', fields: [
+    { k: 'listen_host', label: '监听地址', type: 'text', half: true },
+    { k: 'listen_port', label: '监听端口', type: 'number', half: true },
+    { k: 'path', label: 'WS 路径', type: 'text', half: true },
+    { k: 'self_id', label: '机器人 QQ', type: 'number', half: true },
     { k: 'access_token', label: 'access_token', type: 'secret' },
-    { k: 'self_id', label: '机器人 QQ 号', type: 'number' },
   ] },
-  chatroom: { title: 'Chatroom 对接', fields: [
+  chatroom: { title: 'Chatroom对接', fields: [
     { k: 'base_url', label: '服务端地址', type: 'text' },
-    { k: 'channel_id', label: '目标频道 ID', type: 'number' },
+    { k: 'channel_id', label: '目标频道 ID', type: 'number', half: true },
+    { k: 'poll_interval', label: '读轮询间隔(秒)', type: 'number', half: true },
     { k: 'forward_token', label: 'forward_token', type: 'secret' },
     { k: 'refresh_token', label: 'refresh_token', type: 'secret' },
     { k: 'group_ids', label: 'QQ 群白名单', type: 'intlist' },
-    { k: 'qq_sync_enabled', label: 'QQ 群 → chatroom 同步', type: 'bool' },
-    { k: 'qq_forward_enabled', label: '!q → QQ 群', type: 'bool' },
-    { k: 'qq_to_game_enabled', label: '!q → 游戏内', type: 'bool' },
-    { k: 'poll_interval', label: '读轮询间隔（秒）', type: 'number' },
-    { k: 'voice_api', label: '语音 API', type: 'text' },
-    { k: 'status_api', label: '状态 API', type: 'text' },
+    { k: 'qq_sync_enabled', label: '群→chatroom 同步', type: 'bool', half: true },
+    { k: 'qq_forward_enabled', label: '!q → QQ 群', type: 'bool', half: true },
+    { k: 'qq_to_game_enabled', label: '!q → 游戏内', type: 'bool', half: true },
     { k: 'player_join_pattern', label: '上线识别正则', type: 'text' },
     { k: 'player_quit_pattern', label: '下线识别正则', type: 'text' },
+    { k: 'voice_api', label: '语音 API', type: 'text' },
+    { k: 'status_api', label: '状态 API', type: 'text' },
   ] },
-  chatbridge: { title: 'ChatBridge 互通', fields: [
-    { k: 'enabled', label: '启用', type: 'bool' },
+  chatbridge: { title: 'ChatBridge互通', fields: [
+    { k: 'enabled', label: '启用', type: 'bool', half: true },
+    { k: 'port', label: '端口', type: 'number', half: true },
     { k: 'host', label: '游戏服地址', type: 'text' },
-    { k: 'port', label: '端口', type: 'number' },
-    { k: 'name', label: '客户端标识', type: 'text' },
+    { k: 'name', label: '客户端标识', type: 'text', half: true },
     { k: 'password', label: 'password', type: 'secret' },
     { k: 'aes_key', label: 'aes_key', type: 'secret' },
   ] },
   commands: { title: '群命令', fields: [
-    { k: 'group_allow_all', label: '所有群可用', type: 'bool' },
+    { k: 'group_allow_all', label: '所有群可用', type: 'bool', half: true },
+    { k: 'status_image', label: '/server 发状态图', type: 'bool', half: true },
     { k: 'allow_from', label: '白名单群', type: 'intlist' },
-    { k: 'status_image', label: '/server 发状态图', type: 'bool' },
   ] },
-  api: { title: 'API 服务', fields: [
-    { k: 'enabled', label: '启用', type: 'bool' },
-    { k: 'listen_host', label: '监听地址', type: 'text' },
-    { k: 'listen_port', label: '监听端口', type: 'number' },
+  api: { title: 'API服务', fields: [
+    { k: 'enabled', label: '启用', type: 'bool', half: true },
+    { k: 'listen_port', label: '监听端口', type: 'number', half: true },
+    { k: 'listen_host', label: '监听地址', type: 'text', half: true },
     { k: 'access_token', label: 'access_token', type: 'secret' },
   ] },
-  agent: { title: 'Agent 能力', fields: [
-    { k: 'enabled', label: '启用', type: 'bool' },
+  agent: { title: 'Agent能力', fields: [
+    { k: 'enabled', label: '启用', type: 'bool', half: true },
+    { k: 'llm.timeout_secs', label: 'LLM 超时(秒)', type: 'number', half: true },
     { k: 'llm.api_url', label: 'LLM API 地址', type: 'text' },
     { k: 'llm.api_key', label: 'LLM api_key', type: 'secret' },
-    { k: 'llm.model', label: 'LLM 模型', type: 'text' },
-    { k: 'llm.timeout_secs', label: 'LLM 超时（秒）', type: 'number' },
-    { k: 'llm.max_answer_chars', label: '回答长度上限', type: 'number' },
-    { k: 'routing.enabled', label: '智能路由（@bot 触发）', type: 'bool' },
+    { k: 'llm.model', label: 'LLM 模型', type: 'text', half: true },
+    { k: 'llm.max_answer_chars', label: '回答长度上限', type: 'number', half: true },
+    { k: 'routing.enabled', label: '智能路由(@bot)', type: 'bool', half: true },
     { k: 'routing.group_ids', label: '路由灰度群', type: 'intlist' },
   ] },
   patch: { key: 'patch_broadcast', title: '版本播报', fields: [
-    { k: 'enabled', label: '启用', type: 'bool' },
+    { k: 'enabled', label: '启用', type: 'bool', half: true },
+    { k: 'poll_interval_secs', label: '轮询间隔(秒)', type: 'number', half: true },
     { k: 'feed_url', label: '官方 feed（v2）', type: 'text' },
-    { k: 'poll_interval_secs', label: '轮询间隔（秒）', type: 'number' },
   ] },
   root: { title: '运行参数', fields: [
     { k: 'state_path', label: 'state.json 路径', type: 'text' },
-    { k: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'] },
-    { k: 'log_format', label: '日志格式', type: 'select', options: ['text', 'json'] },
+    { k: 'log_level', label: '日志级别', type: 'select', options: ['DEBUG', 'INFO', 'WARNING', 'ERROR'], half: true },
+    { k: 'log_format', label: '日志格式', type: 'select', options: ['text', 'json'], half: true },
   ] },
 };
 
@@ -77,8 +80,8 @@ let sseSource = null;
 let pollTimer = null;
 let msgTimer = null;
 let logTimer = null;
-let configData = null;   // 最近一次加载的脱敏配置
-let localLogs = [];      // 前端本地记录
+let configData = null;
+let localLogs = [];
 
 const $ = (id) => document.getElementById(id);
 
@@ -166,12 +169,12 @@ function stopAll() {
   if (logTimer) { clearInterval(logTimer); logTimer = null; }
 }
 
-// ---------- 主导航：文字链接切换页面（整体切换，无过渡动画） ----------
+// ---------- 主导航：切换表格行的显隐（整体切换感） ----------
 function switchPage(name) {
-  for (const el of document.querySelectorAll('.page')) el.classList.add('hidden');
+  for (const el of document.querySelectorAll('tr.page')) el.classList.add('hidden');
   const target = $('page-' + name);
   if (target) target.classList.remove('hidden');
-  for (const link of document.querySelectorAll('.navlink')) {
+  for (const link of document.querySelectorAll('#navbar a')) {
     link.classList.toggle('current', link.dataset.page === name);
   }
   setOp('浏览：' + (FIELD_GROUPS[name] ? FIELD_GROUPS[name].title : navTitle(name)));
@@ -182,7 +185,7 @@ function navTitle(name) {
 }
 
 // ============================================================
-// 配置表单（schema 驱动渲染进各页的表格壳）
+// 配置表单（schema 驱动：短字段两两一行，长字段独占一行 colspan=3）
 // ============================================================
 function getPath(obj, dotted) {
   return dotted.split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);
@@ -197,67 +200,45 @@ function setPath(obj, dotted, value) {
   cur[keys[keys.length - 1]] = value;
 }
 
-function renderAllConfigForms(masked) {
-  configData = masked;
-  for (const [pageKey, group] of Object.entries(FIELD_GROUPS)) {
-    const table = $('tbl-' + pageKey);
-    if (!table) continue;
-    const sectionKey = group.key || pageKey; // root 页字段直接在顶层
-    table.innerHTML = '';
-    for (const field of group.fields) {
-      const dotted = sectionKey === 'root' ? field.k : sectionKey + '.' + field.k;
-      const tr = document.createElement('tr');
-      const tdLabel = document.createElement('td');
-      tdLabel.className = 'lbl';
-      tdLabel.textContent = field.label + '：';
-      const tdValue = document.createElement('td');
-      renderFieldValue(tdValue, field, dotted, getPath(masked, dotted));
-      tr.appendChild(tdLabel);
-      tr.appendChild(tdValue);
-      table.appendChild(tr);
-    }
-  }
-}
-
-function renderFieldValue(td, field, path, value) {
+// 单个字段 → 控件（含 data-path 供收集）
+function buildFieldControl(field, dotted, value) {
   if (field.type === 'secret') {
     const isSet = !!(value && value.is_set);
+    const wrap = document.createElement('span');
     const state = document.createElement('span');
-    state.className = isSet ? 'log-result-ok' : 'dim';
+    state.style.color = isSet ? 'green' : 'gray';
     state.textContent = isSet ? '已设置' : '未设置';
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'btn95';
     btn.textContent = '修改';
     const input = document.createElement('input');
     input.type = 'password';
-    input.dataset.path = path;
+    input.size = 25;
+    input.dataset.path = dotted;
     input.dataset.kind = 'secret-new';
     input.style.display = 'none';
-    input.style.width = '220px';
     btn.addEventListener('click', () => {
       const showing = input.style.display !== 'none';
       input.style.display = showing ? 'none' : 'inline-block';
       btn.textContent = showing ? '修改' : '取消';
       if (!showing) input.focus();
     });
-    td.appendChild(state);
-    td.appendChild(btn);
-    td.appendChild(input);
-    return;
+    wrap.appendChild(state);
+    wrap.appendChild(btn);
+    wrap.appendChild(input);
+    return wrap;
   }
   if (field.type === 'bool') {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
-    cb.dataset.path = path;
+    cb.dataset.path = dotted;
     cb.dataset.kind = 'bool';
     cb.checked = !!value;
-    td.appendChild(cb);
-    return;
+    return cb;
   }
   if (field.type === 'select') {
     const select = document.createElement('select');
-    select.dataset.path = path;
+    select.dataset.path = dotted;
     select.dataset.kind = 'select';
     for (const option of field.options) {
       const opt = document.createElement('option');
@@ -266,26 +247,77 @@ function renderFieldValue(td, field, path, value) {
       if (value === option) opt.selected = true;
       select.appendChild(opt);
     }
-    td.appendChild(select);
-    return;
+    return select;
   }
   if (field.type === 'intlist') {
     const input = document.createElement('input');
     input.type = 'text';
-    input.dataset.path = path;
+    input.size = 25;
+    input.dataset.path = dotted;
     input.dataset.kind = 'intlist';
     input.value = Array.isArray(value) ? value.join(', ') : '';
     input.placeholder = '如: 123456, 789000';
-    td.appendChild(input);
-    return;
+    return input;
   }
   const input = document.createElement('input');
-  input.type = field.type === 'number' ? 'number' : 'text';
-  input.dataset.path = path;
+  input.type = field.type === 'number' ? 'text' : 'text';   // 数字也用 text + size（90s 形态）
+  input.size = field.type === 'number' ? 15 : 25;
+  input.dataset.path = dotted;
   input.dataset.kind = field.type === 'number' ? 'number' : 'text';
-  if (field.type === 'number') { input.classList.add('short'); input.step = '1'; input.style.width = '90px'; }
+  if (field.type === 'number') input.classList.add('mono');
   input.value = value === undefined || value === null ? '' : value;
-  td.appendChild(input);
+  return input;
+}
+
+// 一行：label(120 右对齐) + 控件；half 配对时两对同一行
+function appendFieldRow(table, field, dotted, value, pairWith) {
+  const tr = table.insertRow(-1);
+  if (pairWith) {
+    const td1 = tr.insertCell(-1);
+    td1.width = 120; td1.align = 'right'; td1.textContent = pairWith.field.label + '：';
+    const td2 = tr.insertCell(-1);
+    td2.appendChild(buildFieldControl(pairWith.field, pairWith.dotted, pairWith.value));
+    const td3 = tr.insertCell(-1);
+    td3.width = 120; td3.align = 'right'; td3.textContent = field.label + '：';
+    const td4 = tr.insertCell(-1);
+    td4.appendChild(buildFieldControl(field, dotted, value));
+  } else {
+    const td1 = tr.insertCell(-1);
+    td1.width = 120; td1.align = 'right'; td1.textContent = field.label + '：';
+    const td2 = tr.insertCell(-1);
+    td2.colSpan = 3;
+    td2.appendChild(buildFieldControl(field, dotted, value));
+  }
+}
+
+function renderAllConfigForms(masked) {
+  configData = masked;
+  for (const [pageKey, group] of Object.entries(FIELD_GROUPS)) {
+    const table = $('tbl-' + pageKey);
+    if (!table) continue;
+    const sectionKey = group.key || pageKey;
+    table.innerHTML = '';
+    let pendingHalf = null;   // 等待配对的半行字段
+    for (const field of group.fields) {
+      const dotted = sectionKey === 'root' ? field.k : sectionKey + '.' + field.k;
+      const value = getPath(masked, dotted);
+      if (field.half) {
+        if (pendingHalf) {
+          appendFieldRow(table, field, dotted, value, pendingHalf);
+          pendingHalf = null;
+        } else {
+          pendingHalf = { field, dotted, value };
+        }
+      } else {
+        if (pendingHalf) {   // 半行字段后面跟了整行字段：先把半行按整行放出
+          appendFieldRow(table, pendingHalf.field, pendingHalf.dotted, pendingHalf.value, null);
+          pendingHalf = null;
+        }
+        appendFieldRow(table, field, dotted, value, null);
+      }
+    }
+    if (pendingHalf) appendFieldRow(table, pendingHalf.field, pendingHalf.dotted, pendingHalf.value, null);
+  }
 }
 
 // 收集某页的字段 → 部分配置对象（未动的敏感字段原样带回脱敏对象 = 后端保留原值）
@@ -293,20 +325,17 @@ function collectPage(pageKey) {
   const group = FIELD_GROUPS[pageKey];
   const sectionKey = group.key || pageKey;
   const payload = sectionKey === 'root' ? {} : { [sectionKey]: {} };
-  for (const field of group.fields) {
-    const dotted = sectionKey === 'root' ? field.k : sectionKey + '.' + field.k;
-    const el = document.querySelector(`#tbl-${pageKey} [data-path="${CSS.escape(dotted)}"]`);
-    if (!el) continue;
-    if (el.dataset.kind === 'secret-new') {
-      setPath(payload, dotted, el.value);   // 空串 = 后端保留原值
-      continue;
-    }
-    if (el.dataset.kind === 'bool') { setPath(payload, dotted, el.checked); continue; }
-    if (el.dataset.kind === 'number') { setPath(payload, dotted, el.value === '' ? 0 : parseInt(el.value, 10)); continue; }
-    if (el.dataset.kind === 'intlist') {
+  for (const el of document.querySelectorAll('#tbl-' + pageKey + ' [data-path]')) {
+    const dotted = el.dataset.path;
+    const kind = el.dataset.kind;
+    if (kind === 'bool') { setPath(payload, dotted, el.checked); continue; }
+    if (kind === 'number') { setPath(payload, dotted, el.value === '' ? 0 : parseInt(el.value, 10)); continue; }
+    if (kind === 'intlist') {
       setPath(payload, dotted, el.value.split(/[,，\s]+/).filter(Boolean).map((n) => parseInt(n, 10)).filter((n) => !Number.isNaN(n)));
       continue;
     }
+    if (kind === 'select') { setPath(payload, dotted, el.value); continue; }
+    // secret-new：点了修改 → 填了用新值，留空发空串（后端保留原值）
     setPath(payload, dotted, el.value);
   }
   return payload;
@@ -329,24 +358,24 @@ async function loadConfig() {
 async function savePage(pageKey) {
   const msg = $('msg-' + pageKey);
   const progress = $('progress-' + pageKey);
-  msg.className = 'pagemsg';
-  msg.textContent = '正在保存……';
+  const setMsg = (text) => { msg.textContent = text; };
+  setMsg('配置已提交，正在写入……');
   setOp('正在保存 ' + FIELD_GROUPS[pageKey].title + ' …');
   try {
     const data = await api('PUT', '/api/config', collectPage(pageKey));
     if (data.errors && data.errors.length) {
-      msg.className = 'pagemsg err';
-      msg.textContent = data.errors.join('；');
+      msg.style.color = 'red';
+      setMsg('校验失败：' + data.errors.join('；'));
       setOp('保存失败（校验未通过）');
       return;
     }
-    msg.className = 'pagemsg';
-    msg.textContent = data.note || '';
+    msg.style.color = 'red';
     progress.classList.remove('hidden');
     progress.querySelector('.seg-bar').classList.add('on');
     progress.querySelector('.seg-text').textContent = data.restarted
-      ? '配置已写入，服务重启中……'
-      : '配置已写入（' + (data.note || '未执行重启') + '）';
+      ? '配置已保存，服务正在重启...'
+      : '配置已保存（' + (data.note || '未执行重启') + '）';
+    setMsg('配置已保存，服务正在重启...');
     setOp('服务重启中……');
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
@@ -358,16 +387,17 @@ async function savePage(pageKey) {
     }
     progress.querySelector('.seg-bar').classList.remove('on');
     progress.classList.add('hidden');
-    msg.className = 'pagemsg ok';
-    msg.textContent = data.restarted && data.ready === false
+    msg.style.color = 'green';
+    setMsg(data.restarted && data.ready === false
       ? '已保存，但服务 30 秒内未报告就绪，请检查容器日志'
-      : '已保存并生效';
+      : '配置已保存并生效');
     setOp('就绪');
+    addLocalLog('保存配置·' + FIELD_GROUPS[pageKey].title + '（' + (data.changed || []).join(', ') + '）');
     loadConfig();
   } catch (err) {
     if (err.message === '401') return;
-    msg.className = 'pagemsg err';
-    msg.textContent = '保存失败：' + err.message;
+    msg.style.color = 'red';
+    setMsg('保存失败：' + err.message);
     setOp('保存失败');
   }
 }
@@ -375,7 +405,7 @@ async function savePage(pageKey) {
 async function reloadPage(pageKey) {
   await loadConfig();
   const msg = $('msg-' + pageKey);
-  msg.className = 'pagemsg';
+  msg.style.color = 'black';
   msg.textContent = '已从服务器还原本页';
   setOp('还原本页：' + FIELD_GROUPS[pageKey].title);
 }
@@ -559,17 +589,14 @@ function esc(s) {
 
 // ---------- 事件绑定与启动 ----------
 document.addEventListener('DOMContentLoaded', () => {
-  // 登录（登录页保持不变）
   $('login-btn').addEventListener('click', doLogin);
   $('login-reset').addEventListener('click', () => { $('login-user').value = 'admin'; $('login-pass').value = ''; $('login-msg').textContent = ''; });
   $('login-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 
-  // 主导航：文字链接切换页面
-  for (const link of document.querySelectorAll('.navlink')) {
+  for (const link of document.querySelectorAll('#navbar a.navlink, .foot a.navlink')) {
     link.addEventListener('click', (e) => { e.preventDefault(); switchPage(link.dataset.page); });
   }
 
-  // 各配置页：保存 / 还原本页
   for (const btn of document.querySelectorAll('[data-save]')) {
     btn.addEventListener('click', () => savePage(btn.dataset.save));
   }
@@ -585,7 +612,6 @@ document.addEventListener('DOMContentLoaded', () => {
   tickClock();
   setInterval(tickClock, 1000);
 
-  // 启动：探测登录态
   fetch('/api/health')
     .then((r) => (r.ok ? enterConsole('admin') : showLogin('')))
     .catch(() => showLogin('服务未连接'));

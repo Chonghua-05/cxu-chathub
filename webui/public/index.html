@@ -39,296 +39,328 @@
   <div class="login-foot">© 1999 cxu-chathub 控制台</div>
 </div>
 
-<!-- ==================== 主界面：1999 年企业内部管理网页 ==================== -->
+<!-- ==================== 主界面：单张 800px 表格，全部内容在其中 ==================== -->
 <div id="console" class="hidden">
+<center>
+<table width="800" border="1" cellspacing="0" cellpadding="4" bgcolor="#C0C0C0" style="border-color: #FFFFFF #808080 #808080 #FFFFFF;">
 
-  <!-- 顶部通栏 Banner -->
-  <table class="banner" width="100%" cellpadding="4" cellspacing="0">
-    <tr>
-      <td class="banner-title">
-        <a href="/"><u>cxu-chathub 控制台</u></a>
-        <span class="banner-sub">—— 社区消息中枢 · 配置管理与状态监视</span>
-      </td>
-      <td class="banner-time" align="right">
-        现在时间：<span id="clock" class="mono">--:--:--</span><br>
-        用户：<span id="whoami">-</span> ｜ 本次会话请求数：<span id="req-count" class="mono">0</span> ｜
-        <a href="#" id="logout-link">注销</a>
-      </td>
-    </tr>
-  </table>
+  <!-- 顶部 Banner -->
+  <tr>
+    <td bgcolor="#008080" style="color: #FFFFFF;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td align="left"><b><u>cxu-chathub 控制台</u></b> —— 配置管理与状态监控</td>
+          <td align="right" class="mono">现在时间: <span id="clock">--:--:--</span> | 用户: <span id="whoami">-</span> | 请求数: <span id="req-count">0</span> | <a href="#" id="logout-link">注销</a></td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
   <!-- 跑马灯公告 -->
-  <div class="announce-row">
-    <span class="announce-tag">公告</span>
-    <marquee id="marquee" scrollamount="3">正在连接服务……</marquee>
-  </div>
+  <tr>
+    <td bgcolor="#C0C0C0">
+      <span class="announce-tag">公告</span>
+      <marquee id="marquee" scrollamount="3">正在连接服务……</marquee>
+    </td>
+  </tr>
 
-  <hr>
-
-  <!-- 主导航：纯文字链接，点击切换页面 -->
-  <div class="navbar">
-    [ <a href="#overview" class="navlink" data-page="overview">系统总览</a> ]
-    | [ <a href="#onebot" class="navlink" data-page="onebot">OneBot 配置</a> ]
-    | [ <a href="#chatroom" class="navlink" data-page="chatroom">Chatroom 对接</a> ]
-    | [ <a href="#chatbridge" class="navlink" data-page="chatbridge">ChatBridge 互通</a> ]
-    | [ <a href="#commands" class="navlink" data-page="commands">群命令</a> ]
-    | [ <a href="#api" class="navlink" data-page="api">API 服务</a> ]
-    | [ <a href="#agent" class="navlink" data-page="agent">Agent 能力</a> ]
-    | [ <a href="#patch" class="navlink" data-page="patch">版本播报</a> ]
-    | [ <a href="#root" class="navlink" data-page="root">运行参数</a> ]
-    | [ <a href="#messages" class="navlink" data-page="messages">消息与下发</a> ]
-    | [ <a href="#logs" class="navlink" data-page="logs">运行日志</a> ]
-  </div>
-
-  <hr>
+  <!-- 导航：普通文字链接，竖线分隔 -->
+  <tr>
+    <td bgcolor="#E0E0E0" align="center" id="navbar">
+      <a href="#overview" class="navlink" data-page="overview">系统总览</a> |
+      <a href="#onebot" class="navlink" data-page="onebot">OneBot配置</a> |
+      <a href="#chatroom" class="navlink" data-page="chatroom">Chatroom对接</a> |
+      <a href="#chatbridge" class="navlink" data-page="chatbridge">ChatBridge互通</a> |
+      <a href="#commands" class="navlink" data-page="commands">群命令</a> |
+      <a href="#api" class="navlink" data-page="api">API服务</a> |
+      <a href="#agent" class="navlink" data-page="agent">Agent能力</a> |
+      <a href="#patch" class="navlink" data-page="patch">版本播报</a> |
+      <a href="#root" class="navlink" data-page="root">运行参数</a> |
+      <a href="#messages" class="navlink" data-page="messages">消息与下发</a> |
+      <a href="#logs" class="navlink" data-page="logs">运行日志</a>
+    </td>
+  </tr>
 
   <!-- ========== 系统总览 ========== -->
-  <div class="page" id="page-overview">
-    <fieldset class="cfg95">
-      <legend>■ 状态监视</legend>
-      <table class="plain" width="100%">
-        <tr>
-          <td class="led-cell"><span class="led led-off" id="led-onebot"></span></td>
-          <td>OneBot 连接（NapCat 反向 WS）</td>
-          <td class="led-cell"><span class="led led-off" id="led-chatbridge"></span></td>
-          <td>ChatBridge 连接（MC 互通）</td>
-          <td class="led-cell"><span class="led led-off" id="led-api"></span></td>
-          <td>HTTP API 服务</td>
-        </tr>
-      </table>
-      <table class="plain" width="100%">
-        <tr>
-          <td class="lbl" width="110">子系统健康：</td>
-          <td><div id="subsystem-list" class="subsys-box"><span class="dim">加载中……</span></div></td>
-        </tr>
-        <tr>
-          <td class="lbl">最后刷新：</td>
-          <td><span id="last-refresh" class="mono">-</span>
-              （刷新方式：<span id="refresh-mode" class="mono">SSE</span>
-               ｜ <a href="#" id="pause-link">暂停/继续</a>）</td>
-        </tr>
-      </table>
-    </fieldset>
+  <tr class="page" id="page-overview">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>状态监视</legend>
+        <table width="100%" cellpadding="3" cellspacing="0">
+          <tr>
+            <td width="20" align="center"><span class="led led-off" id="led-onebot"></span></td>
+            <td>OneBot 连接</td>
+            <td width="20" align="center"><span class="led led-off" id="led-chatbridge"></span></td>
+            <td>ChatBridge 连接</td>
+            <td width="20" align="center"><span class="led led-off" id="led-api"></span></td>
+            <td>HTTP API 服务</td>
+          </tr>
+        </table>
+        <table width="100%" cellpadding="3" cellspacing="0">
+          <tr>
+            <td width="90" align="right">子系统健康:</td>
+            <td><div id="subsystem-list" class="subsys-box"><span class="dim">加载中……</span></div></td>
+          </tr>
+          <tr>
+            <td align="right">最后刷新:</td>
+            <td><span id="last-refresh" class="mono">-</span>
+                （方式: <span id="refresh-mode" class="mono">SSE</span> ｜ <a href="#" id="pause-link">暂停/继续</a>）</td>
+          </tr>
+        </table>
+      </fieldset>
+      <br>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>系统信息</legend>
+        <table width="100%" cellpadding="3" cellspacing="0">
+          <tr>
+            <td width="90" align="right">服务版本:</td><td id="info-version" class="mono">-</td>
+            <td width="90" align="right">已运行:</td><td id="info-uptime" class="mono">-</td>
+          </tr>
+          <tr>
+            <td align="right">转发成功:</td><td id="info-fwd" class="mono">-</td>
+            <td align="right">转发失败:</td><td id="info-fail" class="mono">-</td>
+          </tr>
+          <tr>
+            <td align="right">去重跳过:</td><td id="info-dup" class="mono">-</td>
+            <td align="right">去重表存量:</td><td id="info-state" class="mono">-</td>
+          </tr>
+        </table>
+      </fieldset>
+    </td>
+  </tr>
 
-    <fieldset class="cfg95">
-      <legend>■ 系统信息</legend>
-      <table class="info-table" width="100%">
-        <tr><td class="lbl" width="110">服务版本</td><td id="info-version" class="mono">-</td>
-            <td class="lbl" width="110">已运行</td><td id="info-uptime" class="mono">-</td></tr>
-        <tr><td class="lbl">转发成功</td><td id="info-fwd" class="mono">-</td>
-            <td class="lbl">转发失败</td><td id="info-fail" class="mono">-</td></tr>
-        <tr><td class="lbl">去重跳过</td><td id="info-dup" class="mono">-</td>
-            <td class="lbl">去重表存量</td><td id="info-state" class="mono">-</td></tr>
-      </table>
-    </fieldset>
-  </div>
+  <!-- ========== 配置页 ×8（表单行由 JS 按 schema 渲染进表格壳） ========== -->
+  <tr class="page hidden" id="page-onebot">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>OneBot 配置 —— NapCat 反向 WS 接入</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-onebot"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="onebot">保存配置</button>
+          <button class="btn95" data-reload="onebot">重置修改</button>
+        </center>
+        <center><font id="msg-onebot" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-onebot">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
 
-  <!-- ========== 各配置页（表单由 JS 按 schema 渲染进这些空壳） ========== -->
-  <div class="page hidden" id="page-onebot">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ OneBot 配置 —— NapCat 反向 WS 接入</legend>
-      <table class="cfg-table" width="100%" id="tbl-onebot"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="onebot">保存本页</button>
-      <button class="btn95" data-reload="onebot">还原本页</button>
-      <span class="pagemsg" id="msg-onebot"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-onebot">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
-  <div class="page hidden" id="page-chatroom">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ Chatroom 对接 —— 服务端读写与白名单</legend>
-      <table class="cfg-table" width="100%" id="tbl-chatroom"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="chatroom">保存本页</button>
-      <button class="btn95" data-reload="chatroom">还原本页</button>
-      <span class="pagemsg" id="msg-chatroom"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-chatroom">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
-  <div class="page hidden" id="page-chatbridge">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ ChatBridge 互通 —— MC 游戏服（AES-CBC/TCP）</legend>
-      <table class="cfg-table" width="100%" id="tbl-chatbridge"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="chatbridge">保存本页</button>
-      <button class="btn95" data-reload="chatbridge">还原本页</button>
-      <span class="pagemsg" id="msg-chatbridge"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-chatbridge">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
-  <div class="page hidden" id="page-commands">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ 群命令 —— /chatroom /server 与权限</legend>
-      <table class="cfg-table" width="100%" id="tbl-commands"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="commands">保存本页</button>
-      <button class="btn95" data-reload="commands">还原本页</button>
-      <span class="pagemsg" id="msg-commands"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-commands">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
-  <div class="page hidden" id="page-api">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ API 服务 —— HTTP API（本控制台的数据来源）</legend>
-      <table class="cfg-table" width="100%" id="tbl-api"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="api">保存本页</button>
-      <button class="btn95" data-reload="api">还原本页</button>
-      <span class="pagemsg" id="msg-api"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-api">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
-  <div class="page hidden" id="page-agent">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ Agent 能力 —— 检索问答 / 智能路由 / LLM</legend>
-      <table class="cfg-table" width="100%" id="tbl-agent"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="agent">保存本页</button>
-      <button class="btn95" data-reload="agent">还原本页</button>
-      <span class="pagemsg" id="msg-agent"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-agent">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
-  <div class="page hidden" id="page-patch">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ 版本播报 —— Mojang 更新自动播报</legend>
-      <table class="cfg-table" width="100%" id="tbl-patch"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="patch">保存本页</button>
-      <button class="btn95" data-reload="patch">还原本页</button>
-      <span class="pagemsg" id="msg-patch"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-patch">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
-  <div class="page hidden" id="page-root">
-    <form autocomplete="off" onsubmit="return false;">
-    <fieldset class="cfg95">
-      <legend>■ 运行参数 —— 状态文件与日志</legend>
-      <table class="cfg-table" width="100%" id="tbl-root"></table>
-    </fieldset>
-    <div class="page-actions">
-      <button class="btn95 btn-def" data-save="root">保存本页</button>
-      <button class="btn95" data-reload="root">还原本页</button>
-      <span class="pagemsg" id="msg-root"></span>
-    </div>
-    <div class="seg-wrap hidden" id="progress-root">
-      <div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <div class="seg-text">服务正在重启，请稍候……</div>
-    </div>
-    </form>
-  </div>
+  <tr class="page hidden" id="page-chatroom">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>Chatroom 对接 —— 服务端读写与白名单</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-chatroom"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="chatroom">保存配置</button>
+          <button class="btn95" data-reload="chatroom">重置修改</button>
+        </center>
+        <center><font id="msg-chatroom" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-chatroom">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
+
+  <tr class="page hidden" id="page-chatbridge">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>ChatBridge 互通 —— MC 游戏服（AES-CBC/TCP 21027）</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-chatbridge"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="chatbridge">保存配置</button>
+          <button class="btn95" data-reload="chatbridge">重置修改</button>
+        </center>
+        <center><font id="msg-chatbridge" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-chatbridge">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
+
+  <tr class="page hidden" id="page-commands">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>群命令 —— /chatroom /server 与权限</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-commands"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="commands">保存配置</button>
+          <button class="btn95" data-reload="commands">重置修改</button>
+        </center>
+        <center><font id="msg-commands" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-commands">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
+
+  <tr class="page hidden" id="page-api">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>API 服务 —— HTTP API（本控制台的数据来源）</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-api"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="api">保存配置</button>
+          <button class="btn95" data-reload="api">重置修改</button>
+        </center>
+        <center><font id="msg-api" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-api">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
+
+  <tr class="page hidden" id="page-agent">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>Agent 能力 —— 检索问答 / 智能路由 / LLM</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-agent"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="agent">保存配置</button>
+          <button class="btn95" data-reload="agent">重置修改</button>
+        </center>
+        <center><font id="msg-agent" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-agent">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
+
+  <tr class="page hidden" id="page-patch">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>版本播报 —— Mojang 更新自动播报</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-patch"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="patch">保存配置</button>
+          <button class="btn95" data-reload="patch">重置修改</button>
+        </center>
+        <center><font id="msg-patch" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-patch">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
+
+  <tr class="page hidden" id="page-root">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>运行参数 —— 状态文件与日志</legend>
+        <table width="100%" cellpadding="3" cellspacing="0" id="tbl-root"></table>
+        <br>
+        <center>
+          <button class="btn95" data-save="root">保存配置</button>
+          <button class="btn95" data-reload="root">重置修改</button>
+        </center>
+        <center><font id="msg-root" color="red"><b></b></font></center>
+        <div class="seg-wrap hidden" id="progress-root">
+          <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="seg-text">服务正在重启，请稍候……</div></center>
+        </div>
+      </fieldset>
+    </td>
+  </tr>
 
   <!-- ========== 消息与下发 ========== -->
-  <div class="page hidden" id="page-messages">
-    <fieldset class="cfg95">
-      <legend>■ 近期消息（环形缓冲，最多 50 条）</legend>
-      <div class="msg-scroll">
-        <table class="msg-table" width="100%" id="msg-table">
-          <thead><tr><th width="70">时间</th><th width="50">来源</th><th width="90">发送者</th><th>内容</th></tr></thead>
-          <tbody><tr><td colspan="4" class="dim">加载中……</td></tr></tbody>
+  <tr class="page hidden" id="page-messages">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>近期消息（环形缓冲，最多 50 条）</legend>
+        <div class="msg-scroll">
+          <table width="100%" cellpadding="2" cellspacing="0" id="msg-table">
+            <thead><tr><th width="70">时间</th><th width="50">来源</th><th width="90">发送者</th><th>内容</th></tr></thead>
+            <tbody><tr><td colspan="4" class="dim">加载中……</td></tr></tbody>
+          </table>
+        </div>
+      </fieldset>
+      <br>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>消息下发（relay，token 由服务端注入）</legend>
+        <table width="100%" cellpadding="3" cellspacing="0">
+          <tr>
+            <td width="120" align="right">目标端:</td>
+            <td align="left">
+              <select id="relay-target">
+                <option value="qq">QQ 群</option>
+                <option value="game">游戏内</option>
+                <option value="chatroom">chatroom 频道</option>
+              </select>
+              　群号（仅 qq，可选）: <input type="text" id="relay-group" size="12" class="mono">
+            </td>
+          </tr>
+          <tr>
+            <td align="right">内容:</td>
+            <td align="left"><textarea id="relay-text" rows="3" style="width:98%"></textarea></td>
+          </tr>
         </table>
-      </div>
-    </fieldset>
-
-    <fieldset class="cfg95">
-      <legend>■ 消息下发（relay，token 由服务端注入）</legend>
-      <table class="form-table" width="100%">
-        <tr>
-          <td class="lbl" width="90">目标端：</td>
-          <td>
-            <select id="relay-target">
-              <option value="qq">QQ 群</option>
-              <option value="game">游戏内</option>
-              <option value="chatroom">chatroom 频道</option>
-            </select>
-            　群号（仅 qq，可选）：<input type="text" id="relay-group" size="10" class="mono">
-          </td>
-        </tr>
-        <tr>
-          <td class="lbl">内容：</td>
-          <td><textarea id="relay-text" rows="3" style="width:98%"></textarea></td>
-        </tr>
-        <tr>
-          <td></td>
-          <td><button class="btn95 btn-def" id="relay-send">发 送</button>
-              <span id="relay-result" class="relay-result"></span></td>
-        </tr>
-      </table>
-    </fieldset>
-  </div>
+        <br>
+        <center>
+          <button class="btn95" id="relay-send">发 送</button>
+          <span id="relay-result" class="relay-result"></span>
+        </center>
+      </fieldset>
+    </td>
+  </tr>
 
   <!-- ========== 运行日志 ========== -->
-  <div class="page hidden" id="page-logs">
-    <fieldset class="cfg95">
-      <legend>■ 运行日志（后端 /api/logs，最新在最上，保留 200 条）</legend>
-      <div class="msg-scroll">
-        <table class="msg-table" width="100%" id="log-table">
-          <thead><tr><th width="130">时间</th><th width="70">用户</th><th width="110">操作</th><th>明细</th><th width="70">结果</th></tr></thead>
-          <tbody><tr><td colspan="5" class="dim">加载中……</td></tr></tbody>
-        </table>
-      </div>
-      <div style="margin-top:4px"><button class="btn95" id="log-clear">清空本地显示</button></div>
-    </fieldset>
-  </div>
-
-  <hr>
+  <tr class="page hidden" id="page-logs">
+    <td>
+      <fieldset style="border: 2px groove #FFFFFF; padding: 8px;">
+        <legend>运行日志（后端 /api/logs，最新在最上，保留 200 条）</legend>
+        <div class="msg-scroll">
+          <table width="100%" cellpadding="2" cellspacing="0" id="log-table">
+            <thead><tr><th width="130">时间</th><th width="70">用户</th><th width="110">操作</th><th>明细</th><th width="70">结果</th></tr></thead>
+            <tbody><tr><td colspan="5" class="dim">加载中……</td></tr></tbody>
+          </table>
+        </div>
+        <br>
+        <center><button class="btn95" id="log-clear">清空本地显示</button></center>
+      </fieldset>
+    </td>
+  </tr>
 
   <!-- 底部通栏状态栏：左操作、右时间 -->
-  <table class="statusbar" width="100%" cellpadding="2" cellspacing="0">
-    <tr>
-      <td id="sb-op" width="50%">就绪</td>
-      <td id="sb-time" width="50%" align="right" class="mono">--:--:--</td>
-    </tr>
-  </table>
+  <tr>
+    <td bgcolor="#E0E0E0">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td align="left" id="sb-op">就绪</td>
+          <td align="right" class="mono" id="sb-time">--:--:--</td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-  <center>
-    <span class="foot">© 1999 <b>cxu-chathub</b> Console ｜ Community Message Hub ｜
-      <a href="#overview" class="navlink" data-page="overview">返回顶部</a></span>
-  </center>
+  <!-- 版权 -->
+  <tr>
+    <td align="center" bgcolor="#C0C0C0" style="font-size: 12px;">
+      © 1999 cxu-chathub Console | Community Message Hub | <a href="#overview" class="navlink" data-page="overview">返回首页</a>
+    </td>
+  </tr>
 
+</table>
+</center>
 </div>
 
 <script src="app.js"></script>

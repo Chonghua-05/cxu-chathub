@@ -1,0 +1,29 @@
+[package]
+name = "cxu-chathub-console"
+version = "1.0.0"
+edition = "2021"
+description = "cxu-chathub Web 控制台中间层：配置管理 + 状态监控 + 服务重启（Rust + axum）"
+license = "MIT"
+
+[[bin]]
+name = "cxu-console"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "process", "time", "sync", "signal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+tower-http = { version = "0.5", features = ["fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+async-stream = "0.3"
+time = { version = "0.3", features = ["macros", "formatting"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

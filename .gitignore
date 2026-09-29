@@ -17,5 +17,5 @@ rust/target/
 # ZCode 会话目录
 .zcode/
 
-# Web 控制台（Node）
-webui/node_modules/
+# Web 控制台（Rust）
+webui/target/

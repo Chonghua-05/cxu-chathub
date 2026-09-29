@@ -213,6 +213,7 @@ async fn status(State(state): State<ApiState>) -> Response {
             "has_refresh_token": snapshot.has_refresh_token,
         },
         "recent_messages": service.recent_log().len(),
+        "subsystems": service.health_report(),
         "capabilities": capabilities,
     }))
     .into_response()

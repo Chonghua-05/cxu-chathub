@@ -1,8 +1,17 @@
 //! 服务装配与生命周期：把 OneBot 服务端、chatroom 双向同步、ChatBridge、玩家追踪、
 //! 命令路由接到一起（对应 Python 版 `main.py` 的 `BridgeService`）。
 //!
+//! v0.4 起按子服务边界组织（见 [`crate::subsystem`]）：消息路径拆在同级的
+//! [`qq`] / [`chatroom`] / [`game`] 子模块（`impl BridgeService` 的分区），
+//! 有生命周期的部件统一注册进 [`Subsystem`] 清单——顺序 start、逆序 stop，
+//! 健康快照汇入 `/healthz` 与 `/api/status` 的 `subsystems` 数组。
+//!
 //! 出站能力通过 [`Hub`] 暴露，回源应答通过 [`ReplySink`]——两者都是未来 agent
 //! 技能的依赖边界（技能不感知消息来自哪一端、经哪条协议发出）。
+
+mod chatroom;
+mod game;
+mod qq;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,6 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use base64::Engine as _;
+use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -19,21 +29,19 @@ use crate::adapters::chatbridge::ChatBridgeClient;
 use crate::adapters::chatroom_auth::ChatroomAuth;
 use crate::adapters::chatroom_read::{AuthTokenProvider, ChatroomReader};
 use crate::adapters::forward_api::{ForwardApi, PostMessage, PostSource};
-use crate::adapters::onebot::{
-    GroupMessage, GroupMessageHandler, OneBotConnection, OneBotServer,
-};
+use crate::adapters::onebot::{GroupMessageHandler, OneBotServer};
 use crate::api::ApiServer;
 use crate::config::AppConfig;
 use crate::router::handlers::{QqForwardRelay, SlashCommandAdapter, SnapshotRelay};
-use crate::router::{
-    CommandHandler, CommandInfo, CommandRouter, DispatchCtx, Hub, InboundMessage, ReplySink, Source,
-};
+use crate::router::{CommandHandler, CommandInfo, CommandRouter, Hub};
 use crate::services::commands::CommandService;
-use crate::services::forwarder::{ChatroomForwarder, ForwarderStats, ImageResolver};
+use crate::services::forwarder::{ChatroomForwarder, ForwarderStats};
 use crate::services::player_events::PlayerEventDetector;
 use crate::state::StateStore;
+use crate::subsystem::{Subsystem, SubsystemHealth};
 
-const CHATROOM_READ_INTERVAL: u64 = 10;
+/// chatroom 读方向轮询间隔（秒）。
+const CHATROOM_POLL_SECS: u64 = 10;
 /// 近期消息环形缓冲上限（Web UI / HTTP API 的数据源，仅内存不落盘）
 const RECENT_MESSAGES_CAP: usize = 200;
 /// 单条消息在缓冲里的文本长度上限
@@ -116,44 +124,11 @@ fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
-/// 游戏侧事件统一写向 chatroom：合成 `source_id`（时间戳 + 自增序号），
-/// 失败只记日志不重试（服务端不去重，重试会造成重复写入）。
-async fn post_game_message(
-    api: &ForwardApi,
-    seq: &AtomicU64,
-    prefix: &str,
-    content: &str,
-    nickname: &str,
-    username: &str,
-) -> bool {
-    if !api.configured() {
-        return false;
-    }
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let seq_no = seq.fetch_add(1, Ordering::Relaxed) + 1;
-    let mut message = PostMessage::new(PostSource::Game);
-    message.content = content.to_string();
-    message.source_message_id = format!("{prefix}-{millis}-{seq_no}");
-    message.sender_username = username.to_string();
-    message.nickname = nickname.to_string();
-    match api.post_message(&message).await {
-        Ok(_) => true,
-        Err(err) => {
-            warn!("游戏侧消息转发失败: {err}");
-            false
-        }
-    }
-}
-
 pub struct BridgeService {
     cfg: AppConfig,
     state: Arc<StateStore>,
     forward_api: Arc<ForwardApi>,
     forwarder: Arc<ChatroomForwarder>,
-    auth: Arc<ChatroomAuth>,
     reader: Arc<ChatroomReader>,
     detector: PlayerEventDetector,
     commands: Arc<CommandService>,
@@ -164,7 +139,10 @@ pub struct BridgeService {
     game_seq: Arc<AtomicU64>,
     recent: Arc<RecentLog>,
     api: Arc<ApiServer>,
-    tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// chatroom 轮询子服务的 typed 句柄（注册消息回调用；生命周期走 subsystems）。
+    chatroom_poll: Arc<ChatroomPollSubsystem>,
+    /// 全部子服务：统一生命周期（顺序 start、逆序 stop）与健康检查。
+    subsystems: Vec<Arc<dyn Subsystem>>,
 }
 
 impl BridgeService {
@@ -289,6 +267,13 @@ impl BridgeService {
             }
         }
 
+        // chatroom 读方向轮询子服务（!q / chatroom→游戏 的数据源；无 token 不启动）
+        let chatroom_poll = Arc::new(ChatroomPollSubsystem::new(
+            reader.clone(),
+            auth.has_refresh_token(),
+            Duration::from_secs(CHATROOM_POLL_SECS),
+        ));
+
         let service = Arc::new_cyclic(|weak: &Weak<BridgeService>| {
             let handler: GroupMessageHandler = {
                 let weak = weak.clone();
@@ -301,20 +286,42 @@ impl BridgeService {
                     })
                 })
             };
+            let server = Arc::new(OneBotServer::new(
+                &cfg.onebot.listen_host,
+                cfg.onebot.listen_port,
+                &cfg.onebot.path,
+                &cfg.onebot.access_token,
+                handler,
+            ));
+            let api = Arc::new(ApiServer::new(weak.clone(), &cfg.api));
+            // 子服务清单：顺序 = start 顺序，stop 逆序；健康快照见 health_report()。
+            // 玩家事件与命令响应无后台任务，只参与健康报告（start/stop 默认空实现）。
+            let subsystems: Vec<Arc<dyn Subsystem>> = vec![
+                Arc::new(OneBotSubsystem { server: server.clone() }),
+                chatroom_poll.clone(),
+                Arc::new(ChatBridgeSubsystem {
+                    client: chatbridge.clone(),
+                    task: Mutex::new(None),
+                }),
+                Arc::new(ApiSubsystem {
+                    api: api.clone(),
+                    enabled: cfg.api.enabled,
+                    token_configured: !cfg.api.access_token.is_empty(),
+                }),
+                Arc::new(PlayerEventsSubsystem {
+                    enabled: detector.enabled(),
+                }),
+                Arc::new(CommandResponderSubsystem),
+            ];
             BridgeService {
-                server: Arc::new(OneBotServer::new(
-                    &cfg.onebot.listen_host,
-                    cfg.onebot.listen_port,
-                    &cfg.onebot.path,
-                    &cfg.onebot.access_token,
-                    handler,
-                )),
-                api: Arc::new(ApiServer::new(weak.clone(), &cfg.api)),
+                server,
+                api,
+                subsystems,
+                chatroom_poll,
                 cfg,
                 state,
                 forward_api,
                 forwarder,
-                auth,
                 reader,
                 detector,
                 commands,
@@ -323,7 +330,6 @@ impl BridgeService {
                 group_ids,
                 game_seq,
                 recent: Arc::new(RecentLog::new(RECENT_MESSAGES_CAP)),
-                tasks: Mutex::new(Vec::new()),
             }
         });
 
@@ -338,6 +344,31 @@ impl BridgeService {
                 })
             }));
         }
+
+        // chatroom 轮询的消息派发回调（Weak 解循环，与 OneBot handler 同款）
+        let weak = Arc::downgrade(&service);
+        service
+            .chatroom_poll
+            .set_on_messages(Arc::new(move |messages| {
+                let weak = weak.clone();
+                Box::pin(async move {
+                    if let Some(service) = weak.upgrade() {
+                        for message in messages {
+                            service.dispatch_chatroom_message(message).await;
+                        }
+                    }
+                })
+            }));
+
+        // /healthz 的子服务健康清单（Weak 解循环，避免 service→server→service 强引用环）
+        let weak = Arc::downgrade(&service);
+        service
+            .server()
+            .set_health_provider(Arc::new(move || {
+                weak.upgrade()
+                    .map(|service| service.health_report())
+                    .unwrap_or_default()
+            }));
 
         Ok(service)
     }
@@ -388,30 +419,10 @@ impl BridgeService {
         self.api.local_addr()
     }
 
-    // --- 生命周期 ---
+    // --- 生命周期（子服务统一：顺序 start，逆序 stop） ---
     pub async fn start(self: &Arc<Self>) -> std::io::Result<()> {
-        self.server.start().await?;
-        {
-            let mut tasks = self.tasks.lock().unwrap();
-            if self.auth.has_refresh_token() {
-                let service = self.clone();
-                tasks.push(tokio::spawn(async move { service.chatroom_loop().await }));
-            } else {
-                warn!("未配置 refresh_token：!q 与 chatroom→游戏 已禁用");
-            }
-            if let Some(client) = &self.chatbridge {
-                let client = client.clone();
-                tasks.push(tokio::spawn(async move { client.run().await }));
-            }
-        }
-        if self.cfg.api.enabled {
-            self.api.start().await?;
-            if self.cfg.api.access_token.is_empty() {
-                warn!("API 写接口已禁用：请配置 api.access_token 后重启（读接口不受影响）");
-            }
-            if let Some(addr) = self.api.local_addr() {
-                info!("HTTP API 已就绪: http://{addr}");
-            }
+        for subsystem in &self.subsystems {
+            subsystem.start().await?;
         }
         let snapshot = self.state.snapshot();
         info!(
@@ -422,194 +433,265 @@ impl BridgeService {
     }
 
     pub async fn stop(&self) {
-        let tasks: Vec<_> = self.tasks.lock().unwrap().drain(..).collect();
-        for task in &tasks {
-            task.abort();
+        for subsystem in self.subsystems.iter().rev() {
+            subsystem.stop().await;
         }
-        for task in tasks {
-            let _ = task.await;
-        }
-        if let Some(client) = &self.chatbridge {
-            client.stop();
-        }
-        self.api.stop().await;
-        self.server.stop().await;
         info!("服务已停止");
     }
 
-    // --- QQ 群事件 ---
-    pub async fn handle_group_message(self: Arc<Self>, conn: Arc<OneBotConnection>, msg: GroupMessage) {
-        if !self.group_ids.is_empty() && !self.group_ids.contains(&msg.group_id) {
-            return;
-        }
-        self.recent.push("qq", &msg.display_name(), &msg.text());
-
-        let origin = QQReplySink {
-            conn: conn.clone(),
-            group_id: msg.group_id,
-        };
-        let inbound = InboundMessage {
-            source: Source::QQ,
-            text: msg.text(),
-            group_id: msg.group_id,
-            user_id: msg.user_id,
-            display_name: msg.display_name(),
-            at_me: msg.at_qq(conn.self_id()),
-        };
-        let ctx = DispatchCtx {
-            hub: self.as_ref(),
-            origin: &origin,
-            msg: &inbound,
-        };
-        if self.router.dispatch(&ctx).await {
-            return; // 命令已消费（/chatroom、/server、未来 agent 技能）
-        }
-
-        let resolver = ConnImageResolver(conn);
-        self.forwarder.handle(&resolver, &msg).await;
+    /// 全部子服务的健康快照（/healthz 与 /api/status 的 subsystems 数据源）。
+    pub fn health_report(&self) -> Vec<SubsystemHealth> {
+        self.subsystems.iter().map(|s| s.health()).collect()
     }
+}
 
-    /// 向配置的 QQ 群发文本（`!q` / 快照通知中继用）。
-    pub async fn send_to_qq_groups(&self, text: &str) -> bool {
-        let Some(conn) = self.server.connection() else {
-            warn!("QQ 未连接，转发跳过: {}", truncate_chars(text, 40));
-            return false;
-        };
-        let mut sent = false;
-        for group_id in &self.group_ids {
-            match conn.send_group_text(*group_id, text).await {
-                Ok(_) => {
-                    sent = true;
-                    info!("转发到 QQ 群 {group_id}: {}", truncate_chars(text, 60));
-                }
-                Err(err) => error!("转发到 QQ 群 {group_id} 失败: {err}"),
-            }
-        }
-        sent
+// --- 子服务实现：统一生命周期与健康检查（见 crate::subsystem） ---
+
+/// QQ 桥接：OneBot 反向 WS 服务端 + 群消息消费。
+struct OneBotSubsystem {
+    server: Arc<OneBotServer>,
+}
+
+#[async_trait]
+impl Subsystem for OneBotSubsystem {
+    fn name(&self) -> &'static str {
+        "qq-bridge"
     }
-
-    // --- chatroom 读方向 ---
-    async fn chatroom_loop(self: Arc<Self>) {
-        loop {
-            let messages = self.reader.poll_once().await;
-            for message in messages {
-                self.dispatch_chatroom_message(message).await;
-            }
-            tokio::time::sleep(Duration::from_secs(CHATROOM_READ_INTERVAL)).await;
-        }
+    async fn start(&self) -> std::io::Result<()> {
+        self.server.start().await
     }
-
-    async fn dispatch_chatroom_message(&self, message: Value) {
-        let content = message
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if content.is_empty() {
-            return;
-        }
-        let username = message
-            .get("username")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        if self.reader.is_own_message(&message) {
-            return;
-        }
-        self.recent.push("chatroom", &username, &content);
-
-        // 路由（!q 中继等）；消费语义在这里不适用——原始消息仍照常广播到游戏
-        let inbound = InboundMessage {
-            source: Source::Chatroom {
-                username: username.clone(),
+    async fn stop(&self) {
+        self.server.stop().await;
+    }
+    fn health(&self) -> SubsystemHealth {
+        match self.server.connection() {
+            Some(conn) => SubsystemHealth {
+                name: self.name(),
+                healthy: true,
+                detail: format!("已连接 self_id={}", conn.self_id()),
             },
-            text: content.clone(),
-            group_id: 0,
-            user_id: 0,
-            display_name: username.clone(),
-            at_me: false,
-        };
-        let sink = ChatroomReplySink::new(&self.forward_api, &self.game_seq);
-        let ctx = DispatchCtx {
-            hub: self,
-            origin: &sink,
-            msg: &inbound,
-        };
-        self.router.dispatch(&ctx).await;
-
-        if self.cfg.chatroom.qq_to_game_enabled {
-            if let Some(client) = &self.chatbridge {
-                if client.is_connected() {
-                    let game_msg = if username.is_empty() {
-                        format!("[Chatroom] {content}")
-                    } else {
-                        format!("[Chatroom] {username}: {content}")
-                    };
-                    client.broadcast_chat(&game_msg, "").await;
-                }
-            }
-        }
-    }
-
-    // --- 游戏 → chatroom ---
-    pub async fn on_game_chat(&self, sender: &str, author: &str, message: &str) {
-        let content = message.trim();
-        if content.is_empty() {
-            return;
-        }
-        let text = if !author.is_empty() {
-            format!("🎮 [{sender}] {author}: {content}")
-        } else {
-            format!("🟢 {content}")
-        };
-        let nickname = if author.is_empty() { sender } else { author };
-        self.recent.push("game", nickname, content);
-        self.forward_game_chat(&text, nickname, author).await;
-
-        // 路由（!q / 快照通知中继）；原始消息上面已照常转发 chatroom
-        let inbound = InboundMessage {
-            source: Source::Game {
-                sender: sender.to_string(),
-                author: author.to_string(),
+            None => SubsystemHealth {
+                name: self.name(),
+                healthy: false,
+                detail: "OneBot 未连接（等待 NapCat 连入）".into(),
             },
-            text: content.to_string(),
-            group_id: 0,
-            user_id: 0,
-            display_name: nickname.to_string(),
-            at_me: false,
-        };
-        let sink = GameReplySink(self.chatbridge.clone());
-        let ctx = DispatchCtx {
-            hub: self,
-            origin: &sink,
-            msg: &inbound,
-        };
-        self.router.dispatch(&ctx).await;
+        }
+    }
+}
 
-        // 玩家上下线推送（ChatBridge 事件驱动，替代旧的状态网站轮询差分——
-        // 轮询可能丢单次事件）。防伪造门：只认系统广播（author 为空）或
-        // 玩家自报（author == 玩家名），他人冒充「xx 加入了游戏」不会触发。
-        if self.detector.enabled() {
-            if let Some(event) = self.detector.detect(sender, content) {
-                if author.is_empty() || author == event.player {
-                    let text = event.push_text();
-                    self.send_to_qq_groups(&text).await;
-                }
-            }
+/// chatroom 轮询拉到一批消息后的派发回调（service 装配后挂入）。
+pub type ChatroomMessagesHandler = dyn Fn(Vec<Value>) -> BoxFuture<'static, ()> + Send + Sync;
+
+/// chatroom 同步：读方向轮询（!q 中继 / chatroom→游戏 的数据源）。
+struct ChatroomPollSubsystem {
+    reader: Arc<ChatroomReader>,
+    /// 无 refresh_token 时轮询不启动（与旧行为一致）。
+    token_present: bool,
+    interval: Duration,
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    on_messages: Mutex<Option<Arc<ChatroomMessagesHandler>>>,
+}
+
+impl ChatroomPollSubsystem {
+    fn new(reader: Arc<ChatroomReader>, token_present: bool, interval: Duration) -> Self {
+        Self {
+            reader,
+            token_present,
+            interval,
+            task: Mutex::new(None),
+            on_messages: Mutex::new(None),
         }
     }
 
-    async fn forward_game_chat(&self, content: &str, nickname: &str, username: &str) {
-        post_game_message(
-            &self.forward_api,
-            &self.game_seq,
-            "game-chat",
-            content,
-            nickname,
-            username,
-        )
-        .await;
+    fn set_on_messages(&self, handler: Arc<ChatroomMessagesHandler>) {
+        *self.on_messages.lock().unwrap() = Some(handler);
+    }
+}
+
+#[async_trait]
+impl Subsystem for ChatroomPollSubsystem {
+    fn name(&self) -> &'static str {
+        "chatroom-sync"
+    }
+    async fn start(&self) -> std::io::Result<()> {
+        if !self.token_present {
+            warn!("未配置 refresh_token：!q 与 chatroom→游戏 已禁用");
+            return Ok(());
+        }
+        let reader = self.reader.clone();
+        let on_messages = self.on_messages.lock().unwrap().clone();
+        let interval = self.interval;
+        let task = tokio::spawn(async move {
+            loop {
+                let messages = reader.poll_once().await;
+                if let Some(on_messages) = &on_messages {
+                    on_messages(messages).await;
+                }
+                tokio::time::sleep(interval).await;
+            }
+        });
+        *self.task.lock().unwrap() = Some(task);
+        Ok(())
+    }
+    async fn stop(&self) {
+        // std MutexGuard 不能跨 await：先取出句柄再等待
+        let task = self.task.lock().unwrap().take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+    fn health(&self) -> SubsystemHealth {
+        if !self.token_present {
+            return SubsystemHealth {
+                name: self.name(),
+                healthy: true,
+                detail: "未配置 refresh_token，已禁用".into(),
+            };
+        }
+        SubsystemHealth {
+            name: self.name(),
+            healthy: true,
+            detail: format!("已启用（轮询间隔 {}s）", self.interval.as_secs()),
+        }
+    }
+}
+
+/// 游戏互通：ChatBridge 客户端（AES-CBC over TCP 21027）连接与收发。
+struct ChatBridgeSubsystem {
+    client: Option<Arc<ChatBridgeClient>>,
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+#[async_trait]
+impl Subsystem for ChatBridgeSubsystem {
+    fn name(&self) -> &'static str {
+        "game-link"
+    }
+    async fn start(&self) -> std::io::Result<()> {
+        if let Some(client) = &self.client {
+            let client = client.clone();
+            *self.task.lock().unwrap() = Some(tokio::spawn(async move { client.run().await }));
+        }
+        Ok(())
+    }
+    async fn stop(&self) {
+        // std MutexGuard 不能跨 await：先取出句柄再等待
+        let task = self.task.lock().unwrap().take();
+        if let Some(task) = task {
+            task.abort();
+            let _ = task.await;
+        }
+        if let Some(client) = &self.client {
+            client.stop();
+        }
+    }
+    fn health(&self) -> SubsystemHealth {
+        match &self.client {
+            None => SubsystemHealth {
+                name: self.name(),
+                healthy: true,
+                detail: "未启用".into(),
+            },
+            Some(client) if client.is_connected() => SubsystemHealth {
+                name: self.name(),
+                healthy: true,
+                detail: "已连接".into(),
+            },
+            Some(_) => SubsystemHealth {
+                name: self.name(),
+                healthy: false,
+                detail: "未连接".into(),
+            },
+        }
+    }
+}
+
+/// 独立 HTTP API（默认 127.0.0.1:8199，配置段 api）。
+struct ApiSubsystem {
+    api: Arc<ApiServer>,
+    enabled: bool,
+    token_configured: bool,
+}
+
+#[async_trait]
+impl Subsystem for ApiSubsystem {
+    fn name(&self) -> &'static str {
+        "http-api"
+    }
+    async fn start(&self) -> std::io::Result<()> {
+        if !self.enabled {
+            return Ok(());
+        }
+        self.api.start().await?;
+        if !self.token_configured {
+            warn!("API 写接口已禁用：请配置 api.access_token 后重启（读接口不受影响）");
+        }
+        if let Some(addr) = self.api.local_addr() {
+            info!("HTTP API 已就绪: http://{addr}");
+        }
+        Ok(())
+    }
+    async fn stop(&self) {
+        self.api.stop().await;
+    }
+    fn health(&self) -> SubsystemHealth {
+        if !self.enabled {
+            return SubsystemHealth {
+                name: self.name(),
+                healthy: true,
+                detail: "未启用".into(),
+            };
+        }
+        let detail = match self.api.local_addr() {
+            Some(addr) => format!("已就绪 http://{addr}"),
+            None => "已配置（未启动）".into(),
+        };
+        SubsystemHealth {
+            name: self.name(),
+            healthy: true,
+            detail,
+        }
+    }
+}
+
+/// 玩家上下线推送（ChatBridge 事件驱动，无后台任务；健康 = 正则是否配置齐全）。
+struct PlayerEventsSubsystem {
+    enabled: bool,
+}
+
+#[async_trait]
+impl Subsystem for PlayerEventsSubsystem {
+    fn name(&self) -> &'static str {
+        "player-events"
+    }
+    fn health(&self) -> SubsystemHealth {
+        SubsystemHealth {
+            name: self.name(),
+            healthy: true,
+            detail: if self.enabled {
+                "已启用（ChatBridge 事件驱动）".into()
+            } else {
+                "未配置正则，未启用".into()
+            },
+        }
+    }
+}
+
+/// 命令响应（/chatroom /server、!q、快照、agent 技能与智能路由；无后台任务）。
+struct CommandResponderSubsystem;
+
+#[async_trait]
+impl Subsystem for CommandResponderSubsystem {
+    fn name(&self) -> &'static str {
+        "command-responder"
+    }
+    fn health(&self) -> SubsystemHealth {
+        SubsystemHealth {
+            name: self.name(),
+            healthy: true,
+            detail: "就绪".into(),
+        }
     }
 }
 
@@ -694,116 +776,55 @@ impl Hub for BridgeService {
     }
 }
 
-// --- 回源应答 sink ---
-/// 回复到 QQ 群（消息来源端）。
-struct QQReplySink {
-    conn: Arc<OneBotConnection>,
-    group_id: i64,
-}
+// 回源应答 sink（QQReplySink / GameReplySink / ChatroomReplySink）与图片引用解析
+// 分别在子模块 qq.rs / game.rs / chatroom.rs 里——各端消息路径就近放在一起。
 
-#[async_trait]
-impl ReplySink for QQReplySink {
-    async fn send_text(&self, text: &str) -> bool {
-        match self.conn.send_group_text(self.group_id, text).await {
-            Ok(_) => true,
-            Err(err) => {
-                error!("发送命令响应失败: {err}");
-                false
-            }
-        }
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    async fn send_image(&self, png: &[u8]) -> bool {
-        let data_uri = format!("base64://{}", base64::engine::general_purpose::STANDARD.encode(png));
-        match self.conn.send_group_image(self.group_id, &data_uri).await {
-            Ok(_) => true,
-            Err(err) => {
-                error!("发送命令图片响应失败: {err}");
-                false
-            }
-        }
-    }
-}
+    /// 子服务清单、健康报告与统一生命周期：start/stop 全链路走一遍
+    /// （onebot listen_port=0 随机端口，避免与其它测试抢 6199）。
+    #[tokio::test]
+    async fn subsystems_lifecycle_and_health_report() {
+        let cfg: AppConfig = serde_json::from_str(
+            r#"{
+                "onebot": { "listen_port": 0 },
+                "chatroom": { "base_url": "https://chatroom.example.com", "group_ids": [1] },
+                "api": { "enabled": true, "listen_port": 0 }
+            }"#,
+        )
+        .unwrap();
+        let service = BridgeService::new(cfg).unwrap();
 
-/// 回复到游戏（广播）。
-struct GameReplySink(Option<Arc<ChatBridgeClient>>);
+        let names: Vec<&str> = service
+            .health_report()
+            .iter()
+            .map(|health| health.name)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "qq-bridge",
+                "chatroom-sync",
+                "game-link",
+                "http-api",
+                "player-events",
+                "command-responder",
+            ]
+        );
 
-#[async_trait]
-impl ReplySink for GameReplySink {
-    async fn send_text(&self, text: &str) -> bool {
-        match self.0.as_ref().filter(|c| c.is_connected()) {
-            Some(client) => {
-                client.broadcast_chat(text, "").await;
-                true
-            }
-            None => false,
-        }
-    }
-}
+        // 未启用的 chatbridge 不算不健康；未连接的 qq-bridge 才算
+        let report = service.health_report();
+        let game = report.iter().find(|h| h.name == "game-link").unwrap();
+        assert!(game.healthy);
+        let qq = report.iter().find(|h| h.name == "qq-bridge").unwrap();
+        assert!(!qq.healthy);
 
-/// 回复到 chatroom 频道：经 Forward API 以 bot 身份写回
-/// （agent 技能回答 chatroom 端提问时的「落库」路径）。
-struct ChatroomReplySink {
-    api: Arc<ForwardApi>,
-    seq: Arc<AtomicU64>,
-}
-
-impl ChatroomReplySink {
-    fn new(api: &Arc<ForwardApi>, seq: &Arc<AtomicU64>) -> Self {
-        Self {
-            api: api.clone(),
-            seq: seq.clone(),
-        }
+        // 统一生命周期：顺序 start（含 http-api 随机端口绑定）、逆序 stop
+        service.start().await.unwrap();
+        assert!(service.api_local_addr().is_some());
+        service.stop().await;
     }
 }
 
-#[async_trait]
-impl ReplySink for ChatroomReplySink {
-    async fn send_text(&self, text: &str) -> bool {
-        if !self.api.configured() {
-            warn!("chatroom 回源应答跳过：Forward API 未配置");
-            return false;
-        }
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let seq_no = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let mut message = PostMessage::new(PostSource::Game);
-        message.content = text.to_string();
-        message.source_message_id = format!("agent-reply-{millis}-{seq_no}");
-        // sender_username 留空：服务端以 bot 账号发布，归属由服务端映射决定
-        match self.api.post_message(&message).await {
-            Ok(_) => true,
-            Err(err) => {
-                warn!("chatroom 回源应答写入失败: {err}");
-                false
-            }
-        }
-    }
-}
-
-/// 图片引用解析：非 http 引用经 OneBot `get_image` 换取 URL。
-struct ConnImageResolver(Arc<OneBotConnection>);
-
-#[async_trait]
-impl ImageResolver for ConnImageResolver {
-    async fn resolve(&self, file_ref: &str) -> Option<String> {
-        let info = self.0.get_image(file_ref).await.ok()?;
-        info.get("url").and_then(Value::as_str).map(String::from)
-    }
-}
-
-/// 读方向鉴权桥：`ChatroomAuth` 满足 `ChatroomReader` 所需的 trait。
-#[async_trait]
-impl AuthTokenProvider for ChatroomAuth {
-    async fn ensure_token(&self) -> bool {
-        ChatroomAuth::ensure_token(self).await
-    }
-    fn access_token(&self) -> String {
-        ChatroomAuth::access_token(self)
-    }
-    fn user_id(&self) -> Option<i64> {
-        ChatroomAuth::user_id(self)
-    }
-}

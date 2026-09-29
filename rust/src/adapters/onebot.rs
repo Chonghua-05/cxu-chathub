@@ -23,6 +23,8 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::subsystem::SubsystemHealth;
+
 use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{RawQuery, State};
@@ -431,9 +433,14 @@ struct Shared {
     queue_tx: Mutex<Option<EventSender>>,
     connections: AtomicU64,
     group_messages: AtomicU64,
+    /// 健康扩展回调（service 装配后挂入）：healthz 据此附带全部子服务的健康清单。
+    health_extra: Mutex<Option<HealthExtraProvider>>,
     /// stop 信号：serve 的 graceful shutdown 与每条 WS 的读取循环都监听它。
     shutdown: watch::Sender<bool>,
 }
+
+/// 健康扩展回调：返回各子服务的健康快照（`/healthz` 的 `subsystems` 数组）。
+pub type HealthExtraProvider = Arc<dyn Fn() -> Vec<SubsystemHealth> + Send + Sync>;
 
 /// 事件队列发送端：从 WS 读取循环送入消费者任务。
 type EventSender = mpsc::UnboundedSender<(Arc<OneBotConnection>, GroupMessage)>;
@@ -505,6 +512,7 @@ impl OneBotServer {
                 queue_tx: Mutex::new(None),
                 connections: AtomicU64::new(0),
                 group_messages: AtomicU64::new(0),
+                health_extra: Mutex::new(None),
                 shutdown,
             }),
             inner: Mutex::new(ServerInner::default()),
@@ -516,6 +524,12 @@ impl OneBotServer {
             connections: self.shared.connections.load(Ordering::Relaxed),
             group_messages: self.shared.group_messages.load(Ordering::Relaxed),
         }
+    }
+
+    /// 挂健康扩展回调：`/healthz` 据此附带全部子服务的健康清单
+    /// （service 装配完成后调用；不挂则 healthz 无 `subsystems` 字段）。
+    pub fn set_health_provider(&self, provider: HealthExtraProvider) {
+        *self.shared.health_extra.lock().unwrap_or_else(PoisonError::into_inner) = Some(provider);
     }
 
     /// 绑定监听、挂路由（GET {path} WS + GET /healthz）、启动消费者任务。
@@ -629,7 +643,18 @@ impl OneBotServer {
 
 async fn healthz(State(shared): State<Arc<Shared>>) -> Json<Value> {
     let conn = shared.live_connection();
-    Json(json!({
+    // 子服务健康清单：装配方挂了回调才输出（旧客户端只认前几个字段，不受影响）
+    let subsystems = (shared.health_extra.lock().unwrap_or_else(PoisonError::into_inner))
+        .as_ref()
+        .map(|provider| {
+            provider()
+                .iter()
+                .map(|health| {
+                    serde_json::to_value(health).unwrap_or(Value::Null)
+                })
+                .collect::<Vec<Value>>()
+        });
+    let mut body = json!({
         "status": "ok",
         "onebot_connected": conn.is_some(),
         "self_id": conn.as_ref().map_or(0, |conn| conn.self_id()),
@@ -637,7 +662,11 @@ async fn healthz(State(shared): State<Arc<Shared>>) -> Json<Value> {
             "connections": shared.connections.load(Ordering::Relaxed),
             "group_messages": shared.group_messages.load(Ordering::Relaxed),
         },
-    }))
+    });
+    if let Some(subsystems) = subsystems {
+        body["subsystems"] = Value::Array(subsystems);
+    }
+    Json(body)
 }
 
 async fn ws_handler(

@@ -102,10 +102,21 @@
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `state_path` | str | `/data/state.json` | 状态文件路径（去重表 / 读游标 / refresh_token） |
-| `log_level` | str | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `log_level` | str | `INFO` | `DEBUG` / `INFO` / `WARNING` / `ERROR`（SIGHUP 可热更） |
+| `log_format` | str | `text` | 日志输出格式：`text`（人类可读）/ `json`（结构化，便于接入日志采集） |
+
+## 热重载（SIGHUP，v0.4）
+
+向进程发 SIGHUP（容器内 `docker kill --signal=HUP chatroom-bridge`）会重读
+`config.json` 并做字段级对比（打码摘要）：
+
+- **热生效**：`chatroom.group_ids` 白名单、`log_level`（`RUST_LOG` 环境变量优先时不覆盖）；
+- **需重启**：其余一切差异会记日志「重启生效」——端点 / token / agent 技能索引等
+  都在装配期固化，热改会造成新旧状态混杂；
+- 重载失败（JSON 非法等）只记日志，服务继续用旧配置运行。
 
 ## 安全约定
 
 - 所有密钥只从配置文件读取；`describe()` 输出的配置摘要会自动打码。
 - `config.json` 已在 `.gitignore` 中，**不要**提交、不要贴到聊天或 issue 里。
-- 修改 `config.json` 后必须**重启进程**：配置只在启动时加载一次，没有热重载接口。
+- 除热重载支持的两个字段（见上节）外，修改 `config.json` 后仍必须**重启进程**。

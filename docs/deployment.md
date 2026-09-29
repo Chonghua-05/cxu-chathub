@@ -53,11 +53,16 @@ docker compose logs -f --tail 50
 ```bash
 docker compose ps
 docker compose logs -f --tail 100
-docker compose restart chatroom-bridge     # 改完 config.json 必须重启
+docker compose restart chatroom-bridge     # 改完 config.json 大多数字段必须重启
+docker kill --signal=HUP chatroom-bridge   # 仅 group_ids 白名单 / log_level 支持热重载
+curl -s http://127.0.0.1:6199/healthz | jq .subsystems   # 各子服务健康清单（v0.4）
+curl -s http://127.0.0.1:6199/metrics      # Prometheus 指标：转发/失败计数、连接状态（v0.4）
 docker stats --no-stream chatroom-bridge
 ```
 
-**配置改了不会生效**：`config.json` 只在进程启动时读一次，且以只读方式挂载，必须 `restart`。
+**配置改了不一定需要重启（v0.4 起）**：`group_ids` 白名单与 `log_level` 支持
+SIGHUP 热重载；其余字段（端点 / token / agent 技能等）仍只在启动时读取，
+必须 `restart`。热重载行为详见 [`configuration.md`](configuration.md) 热重载一节。
 
 `state.json` 在 `./data` 卷里，重启不丢去重表与读游标。
 

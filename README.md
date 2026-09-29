@@ -108,11 +108,11 @@ NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `d
 | `router/` | **统一消息路由**：三端入站汇入 `CommandRouter`，`/命令`、`!q`、`!snap` 均为注册其上的 `CommandHandler` |
 | `agent/` | **agent 能力（已实现）**：命令与文档源全部由 `agent.skills` 配置注册——`LocalDocSource`（本地目录，文件:行号出处）+ `MediaWikiSource`（云端 api.php）+ 通用 `DocQuerySkill`（LLM 整理、失败自动降级摘录）；设计见 [`docs/agent-design.md`](docs/agent-design.md) |
 | `api/` | **独立 HTTP API**（默认 `127.0.0.1:8199`）：状态/近期消息读接口 + token 保护的 `/api/relay` 写接口，带 CORS——Web UI 与其他站点调用的入口（见 [`docs/api-design.md`](docs/api-design.md)） |
-| `service.rs` / `main.rs` | 服务装配与生命周期（`--config`） |
+| `service/` / `subsystem.rs` / `main.rs` | 服务装配与生命周期（`--config`）：消息路径按子服务边界分区，`Subsystem` trait 统一生命周期与健康检查（v0.4） |
 
 ```bash
 cd rust
-cargo test                 # 122 个测试（单元 + WS 集成 + e2e 冒烟）
+cargo test                 # 170 个测试（单元 + WS 集成 + e2e 冒烟）
 cargo build --release
 ./target/release/chatroom-bridge --config ./config.json
 # 状态图渲染变体：cargo build --release --features status-image（需系统 Chromium）

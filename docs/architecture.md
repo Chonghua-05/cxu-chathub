@@ -124,8 +124,14 @@ chatroom ──┘                                       │   /chatroom /server
 供 Web UI 与社区其他网站调用，并带 CORS；设计见 `docs/api-design.md`。
 三端入站在统一入口处写入 `RecentLog`（内存环形缓冲），是 API 与未来 UI 的数据源。
 
-出站协议仍是 `adapters/` 下的五个互不感知的适配器；`service.rs` 负责装配与三个轮询循环，
-与 Python 版 `main.py` 逐行为对应。
+出站协议仍是 `adapters/` 下的五个互不感知的适配器；`service/`（v0.4 起为目录：
+`mod.rs` 装配与生命周期 + `qq.rs` / `chatroom.rs` / `game.rs` 消息路径分区）
+负责装配与轮询循环，与 Python 版 `main.py` 逐行为对应。
+生命周期与健康检查统一走 `subsystem.rs` 的 `Subsystem` trait：六个子服务
+（qq-bridge / chatroom-sync / game-link / http-api / player-events /
+command-responder）顺序 start、逆序 stop，健康快照汇入 `/healthz` 与
+`/api/status` 的 `subsystems` 数组；SIGHUP 热重载（group_ids / log_level）
+与 `/metrics`（Prometheus 文本，6199 端口）也由这一层支撑。
 
 ## 为什么这么切模块
 

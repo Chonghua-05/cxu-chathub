@@ -9,7 +9,7 @@
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
 | GET | `/api/health` | 无 | 存活检查：`{status, version, uptime_secs}` |
-| GET | `/api/status` | 无 | 全量状态：OneBot/ChatBridge 连接、各子系统统计、state 快照、**capabilities 能力清单** |
+| GET | `/api/status` | 无 | 全量状态：OneBot/ChatBridge 连接、各子系统统计、state 快照、`subsystems` 子服务健康清单（v0.4）、**capabilities 能力清单** |
 | GET | `/api/messages?limit=N` | 无 | 近期消息环形缓冲（默认 50，上限 200，仅内存、重启清空） |
 | POST | `/api/relay` | **token** | 按目标端下发消息，`{"target": "qq"\|"game"\|"chatroom", "text": "...", "group_id": 可选}` |
 

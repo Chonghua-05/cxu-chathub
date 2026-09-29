@@ -11,7 +11,6 @@
       v0.3 清单）；剩线上步骤——`!mc` 反编译源码 / `!aimc` 释读文档等本地语料放置、
       线上启用 `agent.skills` / `agent.llm`（改配置须 `docker restart`），LLM 就位后
       跑 `rust/eval/mc-source.json` 与评测 `--llm` 模式核对，并在测试群灰度验证智能路由。
-- [ ] **v0.4 服务化**：子服务边界拆分、配置热重载（SIGHUP）、结构化 JSON 日志、`/metrics`。
 - [ ] **v0.5（新功能）**：Mojang 版本更新播报 —— 自动抓官方更新说明 → LLM 翻译 →
       「译后 / 译前截图 + 原文链接」打包成合并转发消息发群（详见下方 v0.5 节）；
       ＋ Web UI 面板（见下方 v0.5+ 节）。
@@ -67,12 +66,23 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
       LLM 开销）+ 白名单群灰度门控、LLM 拒绝/失败/超时不消费消息（照常转发）、
       决策独立 10s 短超时；默认关闭，设计与验证步骤见 `docs/agent-design.md` §4
 
-## v0.4 —— 服务化（顺延，原 v0.2）
+## v0.4 —— 服务化（已完成，2026-09-29）
 
-- [ ] 拆出「桥接 / 玩家状态 / 命令响应」子服务边界，统一生命周期与健康检查
-- [ ] 统一配置加载与校验，支持热重载（先做「SIGHUP 重读」这一最小形态）
-- [ ] 结构化日志（JSON），便于以后接监控
-- [ ] `/metrics`（Prometheus 文本格式）：转发计数、失败计数、连接状态
+- [x] **子服务边界**：`service.rs` 单体拆为 `service/` 目录（`mod` 装配与生命周期 +
+      `qq` / `chatroom` / `game` 消息路径分区），新增 `subsystem.rs` 的
+      `Subsystem` trait（start/stop/health）——六个子服务（qq-bridge / chatroom-sync /
+      game-link / http-api / player-events / command-responder）顺序 start、逆序 stop，
+      健康快照汇入 `/healthz` 与 `/api/status` 的 `subsystems` 数组；行为零变化
+- [x] **配置热重载（最小形态）**：SIGHUP → 重读配置 → `chatroom.group_ids` 白名单
+      与 `log_level` 热生效（tracing reload 过滤层；RUST_LOG 优先时不覆盖）；
+      其余差异用打码后的 describe 摘要做字段级 diff 并记日志「重启生效」；
+      重载失败（JSON 非法等）不影响运行中的服务
+- [x] **结构化日志**：`log_format: "json"`（默认 `text` 不变），tracing-subscriber
+      JSON 格式，便于接入日志采集
+- [x] **`/metrics`**：Prometheus 文本格式，与 `/healthz` 同在 6199 回环端口——
+      转发/失败计数（qq_forwarded / game_forwarded / skipped_duplicate 等）、
+      连接状态 gauge（onebot / chatbridge 的 enabled 与 connected 分开）、
+      按命令名的响应计数
 
 ## v0.5 —— Mojang 版本更新播报（新功能，需求已定，未实现）
 

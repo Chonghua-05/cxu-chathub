@@ -108,7 +108,7 @@
 |------|------|------|------|
 | `enabled` | bool | `false` | 总开关（启用前建议先配好 `agent.llm`，否则只发原文） |
 | `feed_url` | str | `…/v2/javaPatchNotes.json` | 官方 feed。**必须用 v2 端点**：不带 /v2/ 的 v1 端点 2024 年起已冻结（停在 1.20.4-rc1） |
-| `poll_interval_secs` | int | `1800` | 轮询间隔（秒，下限 10；Mojang 无推送只能轮询） |
+| `poll_interval_secs` | int | `1800` | 轮询间隔（秒，下限 60；Mojang 无推送只能轮询，别打爆官方） |
 
 行为要点：首次启用只记录当前最新版本为基线（不播报历史）；每条播报在
 `state.json` 的 `announced_patches` 标记（保留 50 条），发送失败不标记、

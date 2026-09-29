@@ -43,6 +43,10 @@ const TRANSLATE_PROMPT: &str = "你是 Minecraft 更新公告的翻译器。把�
 /// 纯文本降级时摘录的长度上限（UTF-8 安全截断）。
 const TEXT_FALLBACK_MAX_CHARS: usize = 1500;
 
+/// 单轮待播报条目数的安全上限：超过视为 feed 异常（重置 / 裁剪导致已播报
+/// 条目消失），只记录基线不播报——防止把整份历史当新版本倒进群里。
+const MAX_BURST_ANNOUNCEMENTS: usize = 10;
+
 /// feed 列表条目（只取播报需要的字段；列表最新在前）。
 #[derive(Debug, Clone, Deserialize)]
 pub struct FeedEntry {
@@ -123,13 +127,15 @@ impl PatchBroadcaster {
         }
     }
 
-    fn feed_base_url(&self) -> &str {
-        // 正文 URL = feed 目录 + contentPath（feed 以 /javaPatchNotes.json 结尾）
-        self.cfg
-            .feed_url
-            .trim_end_matches('/')
-            .rsplit_once('/')
-            .map_or(self.cfg.feed_url.as_str(), |(base, _)| base)
+    /// feed 目录（正文 URL = 目录 + contentPath）。仅当末段形似文件名（含 `.`）
+    /// 且剥掉后仍是合法地址（含 `://`）才剥离——兼容 feed_url 填到目录为止、
+    /// 甚至只填裸主机的写法。
+    fn feed_base_url(&self) -> String {
+        let url = self.cfg.feed_url.trim_end_matches('/');
+        match url.rsplit_once('/') {
+            Some((base, last)) if last.contains('.') && base.contains("://") => base.to_string(),
+            _ => url.to_string(),
+        }
     }
 
     /// 轮询一次：拉 feed → 找未播报的新条目 → 按从旧到新播报。
@@ -155,6 +161,19 @@ impl PatchBroadcaster {
                     "版本更新播报首次运行：记录基线 {}，不播报历史版本",
                     newest.title
                 );
+            }
+            return;
+        }
+        // 风暴防护：已播报条目从 feed 消失（裁剪/重置）会让整个列表都「未播报」，
+        // 一次性待播报超过安全上限时按 feed 异常处理——全部记基线、不播报
+        if new_entries.len() > MAX_BURST_ANNOUNCEMENTS {
+            warn!(
+                count = new_entries.len(),
+                max = MAX_BURST_ANNOUNCEMENTS,
+                "单轮待播报条目异常偏多，疑似 feed 重置或裁剪：仅记录基线，不播报"
+            );
+            for entry in &new_entries {
+                self.state.mark_patch_announced(&entry.id, &entry.title);
             }
             return;
         }
@@ -201,8 +220,7 @@ impl PatchBroadcaster {
     }
 
     async fn fetch_body(&self, entry: &FeedEntry) -> Option<String> {
-        let url = format!("{}/{}", self.feed_base_url().trim_end_matches('/'), entry.content_path);
-        let response = match self.client.get(&url).send().await {
+        let url = format!("{}/{}", self.feed_base_url().trim_end_matches('/'), entry.content_path);        let response = match self.client.get(&url).send().await {
             Ok(response) => response,
             Err(err) => {
                 warn!(id = %entry.id, url = %url, error = %err, "更新正文拉取失败");
@@ -326,7 +344,7 @@ impl PatchBroadcaster {
         json!({
             "type": "node",
             "data": {
-                "uin": self.bot_uin.to_string(),
+                "uin": self.node_uin(),
                 "nickname": NODE_NICKNAME,
                 "content": [ { "type": "text", "data": { "text": text } } ],
             }
@@ -339,11 +357,21 @@ impl PatchBroadcaster {
         json!({
             "type": "node",
             "data": {
-                "uin": self.bot_uin.to_string(),
+                "uin": self.node_uin(),
                 "nickname": nickname,
                 "content": [ { "type": "image", "data": { "file": format!("base64://{encoded}") } } ],
             }
         })
+    }
+
+    /// 合并转发节点的发送者 QQ 号（NapCat 自定义节点要求）。`self_id` 未配置
+    /// （0）时兜底一个占位号，避免 uin=0 被实现方拒绝。
+    fn node_uin(&self) -> String {
+        if self.bot_uin > 0 {
+            self.bot_uin.to_string()
+        } else {
+            "10000".into()
+        }
     }
 }
 
@@ -366,7 +394,10 @@ struct EntryBody {
 }
 
 /// 更新说明长图的静态外框：标题栏 + 正文容器（正文 HTML 由 feed 提供）。
-fn render_page(title: &str, body_html: &str) -> String {    format!(
+fn render_page(title: &str, body_html: &str) -> String {
+    // 标题是外部数据，进 HTML 前转义（正文本身是 HTML，不转义）
+    let title = html_escape(title);
+    format!(
         r#"<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 body {{ margin: 0; width: 900px; background: #f6f7f9; font-family: "Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif; color: #1c1e21; }}
 .header {{ background: #3a7d44; color: #fff; padding: 18px 28px; font-size: 24px; font-weight: 700; }}
@@ -440,6 +471,14 @@ fn strip_bom(raw: &str) -> &str {
     raw.strip_prefix('\u{FEFF}').unwrap_or(raw)
 }
 
+/// 最小 HTML 转义（外部文本进 HTML 模板用）。
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 fn preview(raw: &str) -> String {
     raw.chars().take(120).collect()
 }
@@ -481,8 +520,8 @@ impl Subsystem for PatchBroadcastSubsystem {
         });
         *self.task.lock().unwrap() = Some(task);
         info!(
-            interval_secs = self.broadcaster.cfg.poll_interval_secs,
-            "版本更新播报已启用"
+            interval_secs = interval.as_secs(),
+            "版本更新播报已启用（下限 60s，防打爆官方 feed）"
         );
         Ok(())
     }
@@ -820,6 +859,62 @@ mod tests {
             .unwrap();
         assert!(first.contains("n1"), "先发旧的: {first}");
         assert!(second.contains("n2"), "后发新的: {second}");
+    }
+
+    /// 风暴防护：已播报条目从 feed 消失（模拟 feed 裁剪/重置）导致整份列表
+    /// 都「未播报」时，超过单轮安全上限 → 全部记基线、一条不发。
+    #[tokio::test]
+    async fn broadcast_storm_guard_marks_without_announcing() {
+        let (feed_url, feed) = spawn_feed().await;
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(StateStore::new(dir.path().join("state.json")));
+        let sink = Arc::new(FakeSink::default());
+        let bc = broadcaster(config(feed_url), state.clone(), None, None, sink.clone());
+
+        // 正常基线
+        *feed.list.lock().unwrap() = json!({ "entries": [entry_json("old")] }).to_string();
+        bc.poll_once().await;
+
+        // feed 重置：15 条全新条目，"old" 消失
+        let burst: Vec<Value> = (0..15).map(|i| entry_json(&format!("x{i}"))).collect();
+        *feed.list.lock().unwrap() = json!({ "entries": burst }).to_string();
+        bc.poll_once().await;
+
+        assert!(sink.sends.lock().unwrap().is_empty(), "风暴不得播报");
+        assert!(state.patch_announced("x0") && state.patch_announced("x14"));
+        // "old" 保持已播报（保留上限 50 条内不会淘汰）
+        assert!(state.patch_announced("old"));
+    }
+
+    /// feed_base_url：文件名段剥离 + 目录写法与裸主机写法的边界。
+    #[test]
+    fn feed_base_url_handles_directory_forms() {
+        let make = |feed_url: &str| {
+            let bc = PatchBroadcaster::new(
+                config(feed_url.into()),
+                Arc::new(StateStore::new("/tmp/unused-state.json")),
+                None,
+                None,
+                Arc::new(FakeSink::default()),
+                0,
+            );
+            bc.feed_base_url()
+        };
+        assert_eq!(
+            make("https://launchercontent.mojang.com/v2/javaPatchNotes.json"),
+            "https://launchercontent.mojang.com/v2"
+        );
+        assert_eq!(
+            make("https://launchercontent.mojang.com/v2/"),
+            "https://launchercontent.mojang.com/v2"
+        );
+        // 目录写法（末段无扩展名）：不剥离
+        assert_eq!(
+            make("https://mirror.example.com/mojang/v2"),
+            "https://mirror.example.com/mojang/v2"
+        );
+        // 裸主机：不产生 "https:" 退化
+        assert_eq!(make("https://host.example.com"), "https://host.example.com");
     }
 
     /// strip_html：块级标签换行、剥内联标签、解实体、压空行。

@@ -1,6 +1,6 @@
 # cxu-chathub Web 控制台
 
-Windows 95/98 风格的配置管理与状态监视控制台。
+Windows 95/98 风格的配置管理与状态监视控制台。前端为**纯 HTML（零 CSS、零框架、零构建）**：布局靠 `<table>` 嵌套，配色靠 `bgcolor`/`<font>`/`<body link>` 属性，按钮与输入框用浏览器原生控件样式。
 
 ```
 浏览器（Win95 风格前端）
@@ -121,8 +121,7 @@ curl -s http://127.0.0.1:9090/ -o /dev/null -w '%{http_code}\n'   # 200
 webui/
 ├── server.js          # 中间层后端（Express，唯一依赖）
 ├── public/
-│   ├── index.html     # 登录页 + 控制台骨架
-│   ├── style.css      # Win95/98 风格样式
+│   ├── index.html     # 登录页 + 控制台骨架（纯 table 嵌套布局，含全部样式属性）
 │   └── app.js         # 前端逻辑（schema 驱动的配置面板、SSE 状态、消息、日志）
 ├── Dockerfile
 ├── docker-compose.yml

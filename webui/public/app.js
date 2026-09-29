@@ -124,8 +124,8 @@ async function api(method, url, body) {
 // ---------- 登录 / 注销（登录页保持不变） ----------
 function showLogin(message) {
   stopAll();
-  $('console').classList.add('hidden');
-  $('login-screen').classList.remove('hidden');
+  $('console').hidden = true;
+  $('login-screen').hidden = false;
   $('login-msg').textContent = message || '';
 }
 
@@ -154,8 +154,8 @@ async function doLogout() {
 }
 
 function enterConsole(user) {
-  $('login-screen').classList.add('hidden');
-  $('console').classList.remove('hidden');
+  $('login-screen').hidden = true;
+  $('console').hidden = false;
   $('whoami').textContent = user;
   requestCount = 0;
   $('req-count').textContent = '0';
@@ -179,11 +179,11 @@ function stopAll() {
 
 // ---------- 主导航：切换表格行的显隐 ----------
 function switchPage(name) {
-  for (const el of document.querySelectorAll('tr.page')) el.classList.add('hidden');
+  for (const el of document.querySelectorAll('tr.page')) el.hidden = true;
   const target = $('page-' + name);
-  if (target) target.classList.remove('hidden');
+  if (target) target.hidden = false;
   for (const link of document.querySelectorAll('#navbar a')) {
-    link.classList.toggle('current', link.dataset.page === name);
+    link.style.color = link.dataset.page === name ? '#a00000' : '';
   }
   setOp('浏览：' + (PAGES[name] ? PAGES[name].title : name));
   window.scrollTo(0, 0);
@@ -221,7 +221,7 @@ function buildFieldControl(field, dotted, value) {
     state.textContent = isSet ? '已设置' : '未设置';
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.textContent = '修改';
+    btn.innerHTML = '<font face="SimSun,宋体" size="2">修改</font>';
     const input = document.createElement('input');
     input.type = 'password';
     input.size = size;
@@ -231,7 +231,7 @@ function buildFieldControl(field, dotted, value) {
     btn.addEventListener('click', () => {
       const showing = input.style.display !== 'none';
       input.style.display = showing ? 'none' : 'inline-block';
-      btn.textContent = showing ? '修改' : '取消';
+      btn.innerHTML = showing ? '修改' : '<font face="SimSun,宋体" size="2">取消</font>';
       if (!showing) input.focus();
     });
     wrap.appendChild(state);
@@ -337,7 +337,6 @@ async function loadConfig() {
 
 async function savePage(pageKey) {
   const msg = $('msg-' + pageKey);
-  const progress = $('progress-' + pageKey);
   msg.textContent = '配置已提交，正在写入……';
   setOp('正在保存 ' + PAGES[pageKey].title + ' …');
   try {
@@ -349,12 +348,9 @@ async function savePage(pageKey) {
       return;
     }
     msg.style.color = 'red';
-    progress.classList.remove('hidden');
-    progress.querySelector('.seg-bar').classList.add('on');
-    progress.querySelector('.seg-text').textContent = data.restarted
+    msg.textContent = data.restarted
       ? '配置已保存，服务正在重启...'
       : '配置已保存（' + (data.note || '未执行重启') + '）';
-    msg.textContent = '配置已保存，服务正在重启...';
     setOp('服务重启中……');
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
@@ -364,8 +360,6 @@ async function savePage(pageKey) {
       } catch (e) { /* 继续等 */ }
       await new Promise((r) => setTimeout(r, 1000));
     }
-    progress.querySelector('.seg-bar').classList.remove('on');
-    progress.classList.add('hidden');
     msg.style.color = 'green';
     msg.textContent = data.restarted && data.ready === false
       ? '已保存，但服务 30 秒内未报告就绪，请检查容器日志'
@@ -433,15 +427,13 @@ function renderStatus(st) {
   setLed('led-api', connected);
   const marquee = $('marquee');
   if (!connected) {
-    marquee.textContent = '⚠ 服务未连接 —— 请检查 cxu-chathub 容器是否在运行';
-    marquee.className = 'down';
+    marquee.innerHTML = '<font color="#a00000"><b>⚠ 服务未连接 —— 请检查 cxu-chathub 容器是否在运行</b></font>';
   } else {
     const parts = [];
     parts.push('OneBot ' + (st.onebot.connected ? '已连接（self_id=' + st.onebot.self_id + '）' : '等待 NapCat 连入'));
     parts.push('ChatBridge ' + (st.chatbridge.enabled ? (st.chatbridge.connected ? '已连接' : '未连接') : '未启用'));
     if (st.patch_broadcast) parts.push('版本播报 ' + (st.patch_broadcast.enabled ? '已启用' : '未启用'));
-    marquee.textContent = parts.join('　◆　');
-    marquee.className = 'ok';
+    marquee.innerHTML = '<font color="#006000">' + parts.map(esc).join('　◆　') + '</font>';
   }
   const list = $('subsystem-list');
   if (Array.isArray(st.subsystems)) {
@@ -456,7 +448,7 @@ function renderStatus(st) {
       ).join('') +
       '</table>';
   } else {
-    list.innerHTML = '<span class="dim">服务未连接</span>';
+    list.innerHTML = '<font color="#666666">服务未连接</font>';
   }
   if (connected) {
     $('info-version').textContent = 'v' + st.version;
@@ -497,7 +489,7 @@ async function refreshMessages() {
     }
     tbody.innerHTML = messages.map((m) => {
       const time = m.timestamp ? new Date(m.timestamp).toTimeString().slice(0, 8) : '-';
-      return `<tr><td class="mono">${esc(time)}</td><td><span class="src-tag">${esc(m.source)}</span></td>` +
+      return `<tr><td class="mono">${esc(time)}</td><td><font color="#000080" size="1"><b>${esc(m.source)}</b></font></td>` +
         `<td>${esc(m.from)}</td><td>${esc(m.text)}</td></tr>`;
     }).join('');
   } catch (err) {
@@ -565,7 +557,7 @@ function renderLogs(backendLogs) {
   }
   tbody.innerHTML = rows.map((l) =>
     `<tr><td class="mono">${esc(l.time)}</td><td>${esc(l.user)}</td><td>${esc(l.action)}</td>` +
-    `<td>${esc(l.detail)}</td><td class="${String(l.result).includes('失败') || String(l.result).includes('拒绝') ? 'log-result-err' : 'log-result-ok'}">${esc(l.result)}</td></tr>`
+    `<td>${esc(l.detail)}</td><td>${String(l.result).includes('失败') || String(l.result).includes('拒绝') ? `<font color="#a00000"><b>${esc(l.result)}</b></font>` : `<font color="#006000">${esc(l.result)}</font>`}</td></tr>`
   ).join('');
 }
 

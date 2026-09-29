@@ -4,43 +4,43 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=800">
 <title>cxu-chathub 控制台</title>
-<link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body bgcolor="#008080" link="#0000EE" vlink="#551A8B" alink="#FF0000">
 
 <!-- ==================== 登录窗口（外观保持，内部 flex 已改表格/浮动） ==================== -->
-<div id="login-screen" class="login-wrap">
-  <div class="win login-win">
-    <div class="titlebar">
-      <span class="tb-icon">🔐</span><span class="tb-text">登录 - cxu-chathub 控制台</span>
-      <span class="tb-btns"><span class="tb-btn">_</span><span class="tb-btn">□</span><span class="tb-btn">✕</span></span>
-    </div>
-    <div class="win-body">
-      <table class="form-table">
-        <tr>
-          <td class="lbl">用户名：</td>
-          <td><input type="text" id="login-user" autocomplete="username" value="admin"></td>
-        </tr>
-        <tr>
-          <td class="lbl">密　码：</td>
-          <td><input type="password" id="login-pass" autocomplete="current-password"></td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>
-            <button class="btn95 btn-def" id="login-btn">确 定</button>
-            <button class="btn95" id="login-reset">重 置</button>
-          </td>
-        </tr>
-      </table>
-      <div id="login-msg" class="login-msg"></div>
-    </div>
-  </div>
-  <div class="login-foot">© 1999 cxu-chathub 控制台</div>
+<div id="login-screen" align="center">
+  <br><br><br><br><br><br>
+  <font face="SimSun,宋体" size="2"><table width="340" border="2" cellpadding="4" cellspacing="0" bgcolor="#C0C0C0">
+    <tr>
+      <td colspan="2" bgcolor="#000080">
+        <font color="#FFFFFF"><b>🔐 登录 - cxu-chathub 控制台</b></font>
+        <font color="#C0C0C0" size="1">　[ _ ] [ □ ] [ ✕ ]</font>
+      </td>
+    </tr>
+    <tr>
+      <td width="110" align="right">用户名：</td>
+      <td><input type="text" id="login-user" autocomplete="username" value="admin" size="20"></td>
+    </tr>
+    <tr>
+      <td align="right">密　码：</td>
+      <td><input type="password" id="login-pass" autocomplete="current-password" size="20"></td>
+    </tr>
+    <tr>
+      <td colspan="2" align="center">
+        <button id="login-btn"><font face="SimSun,宋体" size="2">确 定</font></button>
+        <button id="login-reset"><font face="SimSun,宋体" size="2">重 置</font></button>
+      </td>
+    </tr>
+    <tr>
+      <td colspan="2" align="center"><font id="login-msg" color="#a00000"></font></td>
+    </tr>
+  </table>
+  <br><font color="#C0C0C0" size="2">© 1999 cxu-chathub 控制台</font></font>
 </div>
 
 <!-- ==================== 主界面：单张通栏表格（纯 table 嵌套；width=100% 随视口收缩，竖滚动条出现也不横向溢出） ==================== -->
-<div id="console" class="hidden">
+<div id="console" hidden>
+<font face="SimSun,宋体" size="2">
 <center>
 <table width="760" border="1" cellspacing="0" cellpadding="4" bgcolor="#C0C0C0" style="border-color: #FFFFFF #808080 #808080 #FFFFFF;">
 
@@ -103,7 +103,7 @@
         <table border="1" cellpadding="4" cellspacing="1" bgcolor="#808080" width="100%">
           <tr>
             <td bgcolor="#C0C0C0" width="110" align="right">子系统健康:</td>
-            <td bgcolor="#C0C0C0"><span id="subsystem-list"><span class="dim">加载中……</span></span></td>
+            <td bgcolor="#C0C0C0"><span id="subsystem-list"><font color="#666666">加载中……</font></span></td>
           </tr>
           <tr>
             <td bgcolor="#C0C0C0" align="right">最后刷新:</td>
@@ -140,7 +140,7 @@
   </tr>
 
   <!-- ========== 配置页 ×3（分组合并；每组一次保存，后端按提交字段深合并） ========== -->
-  <tr class="page hidden" id="page-access">
+  <tr class="page" id="page-access" hidden>
     <td align="left">
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>OneBot 配置 —— NapCat 反向 WS 接入</legend>
@@ -158,18 +158,16 @@
       </fieldset>
       <br>
       <center>
-        <button class="btn95" data-save="access">保存本组配置</button>
-        <button class="btn95" data-reload="access">重置修改</button>
+        <button class="btn95" data-save="access"><font face="SimSun,宋体" size="2">保存本组配置</font></button>
+        <button class="btn95" data-reload="access"><font face="SimSun,宋体" size="2">重置修改</font></button>
       </center>
       <center><font id="msg-access" color="red"><b></b></font></center>
-      <div class="seg-wrap hidden" id="progress-access">
-        <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="seg-text">服务正在重启，请稍候……</div></center>
       </div>
     </td>
   </tr>
 
-  <tr class="page hidden" id="page-features">
+  <tr class="page" id="page-features" hidden>
     <td align="left">
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>群命令 —— /chatroom /server 与权限</legend>
@@ -192,18 +190,16 @@
       </fieldset>
       <br>
       <center>
-        <button class="btn95" data-save="features">保存本组配置</button>
-        <button class="btn95" data-reload="features">重置修改</button>
+        <button class="btn95" data-save="features"><font face="SimSun,宋体" size="2">保存本组配置</font></button>
+        <button class="btn95" data-reload="features"><font face="SimSun,宋体" size="2">重置修改</font></button>
       </center>
       <center><font id="msg-features" color="red"><b></b></font></center>
-      <div class="seg-wrap hidden" id="progress-features">
-        <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="seg-text">服务正在重启，请稍候……</div></center>
       </div>
     </td>
   </tr>
 
-  <tr class="page hidden" id="page-root">
+  <tr class="page" id="page-root" hidden>
     <td align="left">
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px; width: 600px;">
         <legend>运行参数 —— 状态文件与日志</legend>
@@ -211,19 +207,17 @@
       </fieldset>
       <br>
       <center>
-        <button class="btn95" data-save="root">保存本组配置</button>
-        <button class="btn95" data-reload="root">重置修改</button>
+        <button class="btn95" data-save="root"><font face="SimSun,宋体" size="2">保存本组配置</font></button>
+        <button class="btn95" data-reload="root"><font face="SimSun,宋体" size="2">重置修改</font></button>
       </center>
       <center><font id="msg-root" color="red"><b></b></font></center>
-      <div class="seg-wrap hidden" id="progress-root">
-        <center><div class="seg-bar"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="seg-text">服务正在重启，请稍候……</div></center>
       </div>
     </td>
   </tr>
 
   <!-- ========== 消息与下发 ========== -->
-  <tr class="page hidden" id="page-messages">
+  <tr class="page" id="page-messages" hidden>
     <td align="left">
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px;">
         <legend>近期消息（环形缓冲，最多 50 条）</legend>
@@ -254,7 +248,7 @@
         </table>
         <br>
         <center>
-          <button class="btn95" id="relay-send">发 送</button>
+          <button class="btn95" id="relay-send"><font face="SimSun,宋体" size="2">发 送</font></button>
           <span id="relay-result" class="relay-result"></span>
         </center>
       </fieldset>
@@ -262,7 +256,7 @@
   </tr>
 
   <!-- ========== 运行日志 ========== -->
-  <tr class="page hidden" id="page-logs">
+  <tr class="page" id="page-logs" hidden>
     <td align="left">
       <fieldset style="border: 2px groove #FFFFFF; padding: 5px;">
         <legend>运行日志（后端 /api/logs，最新在最上，保留 200 条）</legend>
@@ -271,7 +265,7 @@
           <tbody><tr><td colspan="5" class="dim">加载中……</td></tr></tbody>
         </table>
         <br>
-        <center><button class="btn95" id="log-clear">清空本地显示</button></center>
+        <center><button class="btn95" id="log-clear"><font face="SimSun,宋体" size="2">清空本地显示</font></button></center>
       </fieldset>
     </td>
   </tr>

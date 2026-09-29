@@ -11,9 +11,9 @@
       v0.3 清单）；剩线上步骤——`!mc` 反编译源码 / `!aimc` 释读文档等本地语料放置、
       线上启用 `agent.skills` / `agent.llm`（改配置须 `docker restart`），LLM 就位后
       跑 `rust/eval/mc-source.json` 与评测 `--llm` 模式核对，并在测试群灰度验证智能路由。
-- [ ] **v0.5（新功能）**：Mojang 版本更新播报 —— 自动抓官方更新说明 → LLM 翻译 →
-      「译后 / 译前截图 + 原文链接」打包成合并转发消息发群（详见下方 v0.5 节）；
-      ＋ Web UI 面板（见下方 v0.5+ 节）。
+- [ ] **v0.5 线上启用与验证**：代码侧已完成（见下方 v0.5 清单）——`config.json`
+      开 `patch_broadcast.enabled` + 配 `agent.llm` + 带 status-image 的镜像，
+      测试群验证合并转发的实际显示效果（本机无 NapCat，wire 格式仅单测覆盖）。
 - [ ] **更远**：发布到包管理器、插件化。
 
 ## v0.1
@@ -84,22 +84,28 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
       连接状态 gauge（onebot / chatbridge 的 enabled 与 connected 分开）、
       按命令名的响应计数
 
-## v0.5 —— Mojang 版本更新播报（新功能，需求已定，未实现）
+## v0.5 —— Mojang 版本更新播报（代码已完成，2026-09-29；线上启用待办）
 
-目标：把 Minecraft（Java 版）新版本的官方更新说明自动播报到 QQ 群。
-
-- [ ] **数据源**：轮询 Mojang 官方 `https://launchercontent.mojang.com/javaPatchNotes.json`
-      （字段 title / type / version / image / body(HTML) / contentPath），检测到新版本即触发。
-      注：Mojang **无推送/订阅 API**，只能轮询；判断逻辑可与 `snapshot-updater`
-      （`Chonghua-05/snapshot-updater`，已在每 30 分钟拉版本清单）复用。
-- [ ] **翻译**：复用 cxu 已有的 LLM 配置，把正文译为中文。
-- [ ] **截图**：渲染两张长图——翻译后 / 翻译前（复用 `status_render` 的常驻 Chromium，HTML→PNG）。
-- [ ] **打包**：以「译后截图 + 译前截图 + 原文链接」组成一条**合并转发聊天记录**
-      （OneBot `send_group_forward_msg`，节点含图片与文本）。
-- [ ] **发送**：自动发到配置的 `group_ids` 白名单群。
-
-选型已定：翻译＝现有 LLM；目标群＝`group_ids` 白名单；触发＝轮询自动检测新版本。
-待定：是否需要手动命令（如 `/patch`）重新发送最近一期。
+- [x] **数据源**：轮询官方 feed → 检测新版本。**实测修正**：需求原定的
+      `launchercontent.mojang.com/javaPatchNotes.json`（v1）2024 年起已冻结
+      （最新停在 1.20.4-rc1），改用 **v2 端点** `/v2/javaPatchNotes.json` 为默认
+      （`feed_url` 可配置）；v2 列表条目无正文（只有 shortText），检测到新版本后
+      按 contentPath 从 feed 同目录按需拉取；响应可能带 UTF-8 BOM 已容忍。
+      判定：列表最新在前，前缀中未播报的条目即新版本；**首启只记基线不播报**
+      （防上线风暴）；按从旧到新播报；发送失败不标记、下轮重试（保持时间顺序）。
+      播报状态持久化在 `state.json` 的 `announced_patches`（保留 50 条）
+- [x] **翻译**：复用 `agent.llm`，提示词强制保留 HTML 结构、术语用官方中文译名；
+      未配置 / 失败 → 只发原文（不阻塞播报）
+- [x] **截图**：译后 / 译前两张长图，复用 `status_render` 常驻 Chromium
+      （新增通用 `render_html_png`，900px 宽，与状态图共用浏览器池）；需
+      `status-image` feature，不可用 → 降级为纯文本摘录节点
+- [x] **打包**：合并转发聊天记录（`send_group_forward_msg`，节点 = 标题信息 /
+      译后 / 原文 / 官方链接，节点昵称区分内容）
+- [x] **发送**：发到 `chatroom.group_ids` 白名单群（复用现有白名单，零新增配置）；
+      作为 `patch-broadcast` 子服务接入 v0.4 的统一生命周期与健康检查
+- [ ] **线上验证**：测试群实际显示效果（合并转发节点、图片长图、发送频率）
+- 待定项维持：`/patch` 手动重发命令未实现；单篇原文直链未做（minecraft.net
+  文章 slug 不可稳定推导，链接节点统一指向官方总览页）
 
 ## v0.5+ —— Web UI（2026-09-28 用户提出，未设计）
 

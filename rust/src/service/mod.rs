@@ -30,12 +30,16 @@ use crate::adapters::chatroom_auth::ChatroomAuth;
 use crate::adapters::chatroom_read::{AuthTokenProvider, ChatroomReader};
 use crate::adapters::forward_api::{ForwardApi, PostMessage, PostSource};
 use crate::adapters::onebot::{GroupMessageHandler, OneBotServer};
+use crate::agent::llm::LlmClient;
 use crate::api::ApiServer;
 use crate::config::{describe, AppConfig};
 use crate::router::handlers::{QqForwardRelay, SlashCommandAdapter, SnapshotRelay};
 use crate::router::{CommandHandler, CommandInfo, CommandRouter, Hub};
 use crate::services::commands::CommandService;
 use crate::services::forwarder::{ChatroomForwarder, ForwarderStats};
+use crate::services::patch_broadcast::{
+    ChromiumPatchRenderer, PatchBroadcastSubsystem, PatchBroadcaster, PatchSendSink,
+};
 use crate::services::player_events::PlayerEventDetector;
 use crate::state::StateStore;
 use crate::subsystem::{Subsystem, SubsystemHealth};
@@ -316,6 +320,22 @@ impl BridgeService {
                     enabled: detector.enabled(),
                 }),
                 Arc::new(CommandResponderSubsystem),
+                Arc::new(PatchBroadcastSubsystem::new(
+                    Arc::new(PatchBroadcaster::new(
+                        cfg.patch_broadcast.clone(),
+                        state.clone(),
+                        // 播报复用 agent.llm（未配置时只发原文）；渲染复用 /server 的 Chromium 池
+                        cfg.agent
+                            .llm
+                            .as_ref()
+                            .filter(|llm| !llm.api_url.is_empty())
+                            .and_then(|llm| LlmClient::new(llm.clone()).ok()),
+                        Some(Arc::new(ChromiumPatchRenderer)),
+                        Arc::new(ServicePatchSink(weak.clone())),
+                        cfg.onebot.self_id,
+                    )),
+                    cfg.patch_broadcast.enabled,
+                )),
             ];
             BridgeService {
                 server,
@@ -892,6 +912,38 @@ impl Subsystem for CommandResponderSubsystem {
 }
 
 // --- 出站能力：router::Hub 的服务端实现 ---
+
+/// 版本更新播报出口：合并转发到 `chatroom.group_ids` 白名单群（Weak 引用服务）。
+struct ServicePatchSink(Weak<BridgeService>);
+
+#[async_trait]
+impl PatchSendSink for ServicePatchSink {
+    async fn send_forward(&self, nodes: Value) -> bool {
+        let Some(service) = self.0.upgrade() else {
+            return false;
+        };
+        let Some(conn) = service.server.connection() else {
+            warn!("QQ 未连接，版本更新播报本轮跳过（未标记已播报，下轮轮询重试）");
+            return false;
+        };
+        let groups = service.group_ids_snapshot();
+        if groups.is_empty() {
+            warn!("chatroom.group_ids 为空，版本更新播报没有目标群");
+            return false;
+        }
+        let mut sent = false;
+        for group_id in groups {
+            match conn.send_group_forward_msg(group_id, nodes.clone()).await {
+                Ok(_) => {
+                    info!("版本更新播报已发到群 {group_id}");
+                    sent = true;
+                }
+                Err(err) => error!("版本更新播报发到群 {group_id} 失败: {err}"),
+            }
+        }
+        sent
+    }
+}
 #[async_trait]
 impl Hub for BridgeService {
     async fn qq_send_text(&self, group_id: Option<i64>, text: &str) -> bool {
@@ -1007,6 +1059,7 @@ mod tests {
                 "http-api",
                 "player-events",
                 "command-responder",
+                "patch-broadcast",
             ]
         );
 

@@ -97,6 +97,23 @@
 批量评测：`cargo run --release --example eval_retrieval -- rust/eval/<问题集>.json`（见
 [`agent-design.md`](agent-design.md) §7）。
 
+## `patch_broadcast` —— Mojang 版本更新播报（v0.5）
+
+轮询官方补丁说明 feed，检测到 Java 版新版本后：LLM 翻译正文 → Chromium 渲染
+「译后 / 译前」两张长图 → 打包成合并转发聊天记录，发到 `chatroom.group_ids`
+白名单群（复用现有白名单，无独立目标群配置）。实现见
+`services/patch_broadcast.rs`；作为 `patch-broadcast` 子服务接入统一健康检查。
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `enabled` | bool | `false` | 总开关（启用前建议先配好 `agent.llm`，否则只发原文） |
+| `feed_url` | str | `…/v2/javaPatchNotes.json` | 官方 feed。**必须用 v2 端点**：不带 /v2/ 的 v1 端点 2024 年起已冻结（停在 1.20.4-rc1） |
+| `poll_interval_secs` | int | `1800` | 轮询间隔（秒，下限 10；Mojang 无推送只能轮询） |
+
+行为要点：首次启用只记录当前最新版本为基线（不播报历史）；每条播报在
+`state.json` 的 `announced_patches` 标记（保留 50 条），发送失败不标记、
+下轮重试；长图需构建时带 `status-image` feature，否则自动降级纯文本节点。
+
 ## 顶层
 
 | 字段 | 类型 | 默认 | 说明 |

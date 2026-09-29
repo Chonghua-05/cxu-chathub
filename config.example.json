@@ -11,7 +11,9 @@
     "channel_id": 1,
     "forward_token": "",
     "refresh_token": "",
-    "group_ids": [123456789],
+    "group_ids": [
+      123456789
+    ],
     "qq_sync_enabled": true,
     "qq_forward_enabled": true,
     "qq_to_game_enabled": true,
@@ -20,8 +22,14 @@
     "voice_api": "https://chatroom.example.com/api/voice/qqbot/get_voice_channel_people",
     "status_api": "https://status.example.com/api/qqbot/status",
     "server_addresses": [
-      ["主IP", "game.example.com"],
-      ["备用地址", "backup.example.com:25565"]
+      [
+        "主IP",
+        "game.example.com"
+      ],
+      [
+        "备用地址",
+        "backup.example.com:25565"
+      ]
     ]
   },
   "chatbridge": {
@@ -60,46 +68,97 @@
         "name": "mc",
         "description": "MC 源码查询（本地反编译源码副本，只查源码）",
         "sources": [
-          {"type": "local", "root": "/data/docs/mc-source", "name": "mc-source", "extensions": [".java"]}
+          {
+            "type": "local",
+            "root": "/data/docs/mc-source",
+            "name": "mc-source",
+            "extensions": [
+              ".java"
+            ]
+          }
         ]
       },
       {
         "name": "aimc",
         "description": "MC 源码释读（架构与逻辑设计解读文档；语料就位后生效）",
         "sources": [
-          {"type": "local", "root": "/data/docs/aimc", "name": "mc-annotated", "extensions": [".md"]}
+          {
+            "type": "local",
+            "root": "/data/docs/aimc",
+            "name": "mc-annotated",
+            "extensions": [
+              ".md"
+            ]
+          }
         ]
       },
       {
         "name": "tmc",
         "description": "GTMC 文章库（techmc.wiki，云端自动下载缓存）",
         "sources": [
-          {"type": "repo", "repo": "techmc-wiki/articles", "branch": "main", "subdir": "", "site_url": "", "name": "gtmc-articles"}
+          {
+            "type": "repo",
+            "repo": "techmc-wiki/articles",
+            "branch": "main",
+            "subdir": "",
+            "site_url": "",
+            "name": "gtmc-articles"
+          }
         ]
       },
       {
         "name": "doc",
         "description": "RMS 服务器文档（云端 RMS-Docs，自动下载缓存）",
         "sources": [
-          {"type": "repo", "repo": "Conflux-Union/RMS-Docs", "branch": "master", "subdir": "", "site_url": "https://docs.rms.net.cn", "name": "rms-docs"}
+          {
+            "type": "repo",
+            "repo": "Conflux-Union/RMS-Docs",
+            "branch": "master",
+            "subdir": "",
+            "site_url": "https://docs.rms.net.cn",
+            "name": "rms-docs"
+          }
         ]
       },
       {
         "name": "docs",
         "description": "Minecraft 系统机制文档（英文，minecraftdocs.dev，云端自动下载缓存）",
         "sources": [
-          {"type": "repo", "repo": "AlexanderjFraser/MinecraftDocs", "branch": "main", "subdir": "src", "site_url": "https://minecraftdocs.dev", "extensions": [".md"], "exclude": ["summary.md", "reference/class-index"], "name": "minecraftdocs"}
+          {
+            "type": "repo",
+            "repo": "AlexanderjFraser/MinecraftDocs",
+            "branch": "main",
+            "subdir": "src",
+            "site_url": "https://minecraftdocs.dev",
+            "extensions": [
+              ".md"
+            ],
+            "exclude": [
+              "summary.md",
+              "reference/class-index"
+            ],
+            "name": "minecraftdocs"
+          }
         ]
       },
       {
         "name": "wiki",
         "description": "Minecraft Wiki 查询",
         "sources": [
-          {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php", "name": "minecraft-wiki"}
+          {
+            "type": "mediawiki",
+            "api_url": "https://zh.minecraft.wiki/api.php",
+            "name": "minecraft-wiki"
+          }
         ]
       }
     ]
   },
   "state_path": "/data/state.json",
-  "log_level": "INFO"
+  "log_level": "INFO",
+  "patch_broadcast": {
+    "enabled": false,
+    "feed_url": "https://launchercontent.mojang.com/v2/javaPatchNotes.json",
+    "poll_interval_secs": 1800
+  }
 }

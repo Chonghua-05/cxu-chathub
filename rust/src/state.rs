@@ -1,6 +1,6 @@
-//! 持久化状态：去重表、读游标、refresh_token。
+//! 持久化状态：去重表、读游标、refresh_token、已播报的版本更新。
 //! 写入策略：临时文件 + fsync + 原子 rename；读取损坏时丢弃重建，不让坏文件卡死启动。
-//! `state.json` 格式与 Python 版逐字节兼容。
+//! `state.json` 格式与 Python 版逐字节兼容（v0.5 新增字段向后兼容，缺省为空）。
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -8,6 +8,9 @@ use std::sync::Mutex;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
+
+/// 已播报版本条目的保留上限（防 state.json 无限膨胀；远超实际更新频率）。
+const MAX_ANNOUNCED_PATCHES: usize = 50;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StateSnapshot {
@@ -24,12 +27,16 @@ struct StateFile {
     last_read_message_id: i64,
     #[serde(default)]
     refresh_token: String,
+    /// v0.5 版本更新播报：已播报的补丁 id → 标题（判断「新版本」的依据）
+    #[serde(default)]
+    announced_patches: IndexMap<String, String>,
 }
 
 struct Inner {
     forwarded: IndexMap<String, i64>,
     last_read_message_id: i64,
     refresh_token: String,
+    announced_patches: IndexMap<String, String>,
 }
 
 /// 去重表 + 读游标 + refresh_token 的小型 JSON 存储。
@@ -53,6 +60,7 @@ impl StateStore {
             forwarded: IndexMap::new(),
             last_read_message_id: 0,
             refresh_token: String::new(),
+            announced_patches: IndexMap::new(),
         };
         match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<StateFile>(&bytes) {
@@ -60,6 +68,7 @@ impl StateStore {
                     inner.forwarded = file.forwarded;
                     inner.last_read_message_id = file.last_read_message_id;
                     inner.refresh_token = file.refresh_token;
+                    inner.announced_patches = file.announced_patches;
                 }
                 Err(err) => warn!("状态文件损坏，已重建: {} ({err})", path.display()),
             },
@@ -102,6 +111,16 @@ impl StateStore {
         }
     }
 
+    /// 从内存态拼出待落盘的 StateFile（各 setter 共用）。
+    fn snapshot_file(guard: &Inner) -> StateFile {
+        StateFile {
+            forwarded: guard.forwarded.clone(),
+            last_read_message_id: guard.last_read_message_id,
+            refresh_token: guard.refresh_token.clone(),
+            announced_patches: guard.announced_patches.clone(),
+        }
+    }
+
     // --- 去重表 ---
     pub fn forwarded_id(&self, source_message_id: &str) -> Option<i64> {
         self.inner
@@ -127,11 +146,7 @@ impl StateStore {
         while guard.forwarded.len() > self.max_forwarded {
             guard.forwarded.shift_remove_index(0);
         }
-        self.flush(&StateFile {
-            forwarded: guard.forwarded.clone(),
-            last_read_message_id: guard.last_read_message_id,
-            refresh_token: guard.refresh_token.clone(),
-        });
+        self.flush(&Self::snapshot_file(&guard));
     }
 
     // --- 读游标 ---
@@ -146,11 +161,7 @@ impl StateStore {
         let state = match self.inner.lock() {
             Ok(mut guard) => {
                 guard.last_read_message_id = message_id;
-                StateFile {
-                    forwarded: guard.forwarded.clone(),
-                    last_read_message_id: guard.last_read_message_id,
-                    refresh_token: guard.refresh_token.clone(),
-                }
+                Self::snapshot_file(&guard)
             }
             Err(_) => return,
         };
@@ -169,11 +180,39 @@ impl StateStore {
         let state = match self.inner.lock() {
             Ok(mut guard) => {
                 guard.refresh_token = token;
-                StateFile {
-                    forwarded: guard.forwarded.clone(),
-                    last_read_message_id: guard.last_read_message_id,
-                    refresh_token: guard.refresh_token.clone(),
+                Self::snapshot_file(&guard)
+            }
+            Err(_) => return,
+        };
+        self.flush(&state);
+    }
+
+    // --- 已播报的版本更新（v0.5 播报去重） ---
+    pub fn patch_announced(&self, patch_id: &str) -> bool {
+        self.inner
+            .lock()
+            .map(|guard| guard.announced_patches.contains_key(patch_id))
+            .unwrap_or(false)
+    }
+
+    pub fn has_announced_patches(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|guard| !guard.announced_patches.is_empty())
+            .unwrap_or(false)
+    }
+
+    /// 标记一个补丁条目已播报（含标题便于排查）；超过保留上限时淘汰最早的。
+    pub fn mark_patch_announced(&self, patch_id: &str, title: &str) {
+        let state = match self.inner.lock() {
+            Ok(mut guard) => {
+                guard
+                    .announced_patches
+                    .insert(patch_id.to_string(), title.to_string());
+                while guard.announced_patches.len() > MAX_ANNOUNCED_PATCHES {
+                    guard.announced_patches.shift_remove_index(0);
                 }
+                Self::snapshot_file(&guard)
             }
             Err(_) => return,
         };

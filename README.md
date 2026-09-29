@@ -112,7 +112,7 @@ NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `d
 
 ```bash
 cd rust
-cargo test                 # 170 个测试（单元 + WS 集成 + e2e 冒烟）
+cargo test                 # 175 个测试（单元 + WS 集成 + e2e 冒烟）
 cargo build --release
 ./target/release/chatroom-bridge --config ./config.json
 # 状态图渲染变体：cargo build --release --features status-image（需系统 Chromium）

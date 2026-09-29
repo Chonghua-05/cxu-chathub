@@ -305,6 +305,31 @@ pub struct AgentConfig {
     pub routing: RoutingConfig,
 }
 
+/// Mojang 版本更新播报（v0.5）：轮询官方补丁说明 feed，检测到新版本即经
+/// LLM 翻译 + Chromium 截图，以合并转发消息发到 `chatroom.group_ids` 白名单群。
+/// 实现见 `services/patch_broadcast.rs`；截图需 `status-image` feature，
+/// LLM / 截图不可用时自动降级为纯文本节点。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct PatchBroadcastConfig {
+    /// 总开关（默认 false）
+    pub enabled: bool,
+    /// 官方补丁说明 feed。注意：v1 端点（不带 /v2/）2024 年起已冻结，默认用 v2
+    pub feed_url: String,
+    /// 轮询间隔（秒，默认 1800 = 30 分钟；Mojang 无推送，只能轮询）
+    pub poll_interval_secs: u64,
+}
+
+impl Default for PatchBroadcastConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            feed_url: "https://launchercontent.mojang.com/v2/javaPatchNotes.json".into(),
+            poll_interval_secs: 1800,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     #[serde(default, deserialize_with = "lenient")]
@@ -319,6 +344,8 @@ pub struct AppConfig {
     pub api: ApiConfig,
     #[serde(default, deserialize_with = "lenient")]
     pub agent: AgentConfig,
+    #[serde(default, deserialize_with = "lenient")]
+    pub patch_broadcast: PatchBroadcastConfig,
     #[serde(default = "default_state_path")]
     pub state_path: String,
     #[serde(default = "default_log_level")]
@@ -349,6 +376,7 @@ impl Default for AppConfig {
             commands: CommandsConfig::default(),
             api: ApiConfig::default(),
             agent: AgentConfig::default(),
+            patch_broadcast: PatchBroadcastConfig::default(),
             state_path: default_state_path(),
             log_level: default_log_level(),
             log_format: default_log_format(),

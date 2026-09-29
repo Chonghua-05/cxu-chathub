@@ -420,6 +420,21 @@ impl OneBotConnection {
         .await
     }
 
+    /// 发送合并转发聊天记录（v0.5 版本更新播报用）。
+    /// `messages` 为 OneBot 节点数组（`{"type":"node","data":{...}}`），
+    /// 节点内容由调用方组装（见 `services/patch_broadcast.rs`）。
+    pub async fn send_group_forward_msg(
+        &self,
+        group_id: i64,
+        messages: Value,
+    ) -> Result<Value, OneBotError> {
+        self.call(
+            "send_group_forward_msg",
+            json!({ "group_id": group_id, "messages": messages }),
+        )
+        .await
+    }
+
     /// 取图片的真实下载地址（供转发到 chatroom 时上传）。
     pub async fn get_image(&self, file: &str) -> Result<Value, OneBotError> {
         self.call("get_image", json!({ "file": file })).await

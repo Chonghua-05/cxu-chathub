@@ -285,6 +285,52 @@ impl StatusRenderer {
     }
 }
 
+/// 渲染任意 HTML 为长图 PNG（v0.5 版本更新播报用）：与状态图共用常驻
+/// Chromium 与截图管线（量取 body 包围盒 → 视口贴合 → 截整页），页面宽度
+/// 900px。池内浏览器尺寸与状态图不同时会触发重建——播报是低频事件，可接受。
+#[cfg(feature = "status-image")]
+pub async fn render_html_png(html: &str) -> Result<Vec<u8>, RenderError> {
+    use std::time::Instant;
+
+    let started = Instant::now();
+    let script = format!(
+        "document.open();document.write({});document.close();",
+        serde_json::to_string(html).map_err(|err| RenderError::Serialize(err.to_string()))?
+    );
+    let path = find_chrome().ok_or(RenderError::ChromeNotFound)?;
+    let size = (900u32, 1000u32);
+
+    let mut slot = browser_pool::lock();
+    if slot
+        .as_ref()
+        .is_none_or(|pooled| (pooled.width, pooled.height) != size)
+    {
+        *slot = Some(browser_pool::launch(&path, size)?);
+    }
+
+    let rendered = {
+        let pooled = slot.as_ref().expect("浏览器已启动");
+        shoot_status(&pooled.tab, &script)
+    };
+    let result = match rendered {
+        Ok(png) => Ok(png),
+        Err(err) => {
+            tracing::warn!("更新播报长图渲染失败，重建 Chromium 后重试一次: {err}");
+            *slot = Some(browser_pool::launch(&path, size)?);
+            let pooled = slot.as_ref().expect("浏览器已重建");
+            shoot_status(&pooled.tab, &script)
+        }
+    };
+    tracing::info!("更新播报长图渲染耗时 {}ms", started.elapsed().as_millis());
+    result
+}
+
+/// 非 status-image 构建：恒 Unsupported（上层降级为纯文本节点）。
+#[cfg(not(feature = "status-image"))]
+pub async fn render_html_png(_html: &str) -> Result<Vec<u8>, RenderError> {
+    Err(RenderError::Unsupported("status-image feature 未启用"))
+}
+
 /// 常驻 Chromium 实例：`/server`、`/status` 每次都重启浏览器的话，冷启动就要 2-4 秒，
 /// 所以启动一次后复用；渲染本身是阻塞调用，用互斥锁把并发请求串行化。
 #[cfg(feature = "status-image")]

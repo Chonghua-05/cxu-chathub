@@ -64,7 +64,7 @@ impl BridgeService {
     }
 
     async fn forward_game_chat(&self, content: &str, nickname: &str, username: &str) {
-        post_game_message(
+        let ok = post_game_message(
             &self.forward_api,
             &self.game_seq,
             "game-chat",
@@ -73,6 +73,12 @@ impl BridgeService {
             username,
         )
         .await;
+        // /metrics 计数（失败只记日志不重试的策略不变）
+        if ok {
+            self.game_forward_ok.fetch_add(1, Ordering::Relaxed);
+        } else {
+            self.game_forward_fail.fetch_add(1, Ordering::Relaxed);
+        }
     }
 }
 

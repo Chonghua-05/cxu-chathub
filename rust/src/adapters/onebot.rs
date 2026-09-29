@@ -435,12 +435,17 @@ struct Shared {
     group_messages: AtomicU64,
     /// 健康扩展回调（service 装配后挂入）：healthz 据此附带全部子服务的健康清单。
     health_extra: Mutex<Option<HealthExtraProvider>>,
+    /// 指标回调（service 装配后挂入）：/metrics 据此输出 Prometheus 文本。
+    metrics_extra: Mutex<Option<MetricsProvider>>,
     /// stop 信号：serve 的 graceful shutdown 与每条 WS 的读取循环都监听它。
     shutdown: watch::Sender<bool>,
 }
 
 /// 健康扩展回调：返回各子服务的健康快照（`/healthz` 的 `subsystems` 数组）。
 pub type HealthExtraProvider = Arc<dyn Fn() -> Vec<SubsystemHealth> + Send + Sync>;
+
+/// 指标回调：返回 Prometheus 文本格式指标（`/metrics` 响应体）。
+pub type MetricsProvider = Arc<dyn Fn() -> String + Send + Sync>;
 
 /// 事件队列发送端：从 WS 读取循环送入消费者任务。
 type EventSender = mpsc::UnboundedSender<(Arc<OneBotConnection>, GroupMessage)>;
@@ -513,6 +518,7 @@ impl OneBotServer {
                 connections: AtomicU64::new(0),
                 group_messages: AtomicU64::new(0),
                 health_extra: Mutex::new(None),
+                metrics_extra: Mutex::new(None),
                 shutdown,
             }),
             inner: Mutex::new(ServerInner::default()),
@@ -532,6 +538,12 @@ impl OneBotServer {
         *self.shared.health_extra.lock().unwrap_or_else(PoisonError::into_inner) = Some(provider);
     }
 
+    /// 挂指标回调：`/metrics` 据此输出 Prometheus 文本
+    /// （service 装配完成后调用；不挂则 /metrics 返回空）。
+    pub fn set_metrics_provider(&self, provider: MetricsProvider) {
+        *self.shared.metrics_extra.lock().unwrap_or_else(PoisonError::into_inner) = Some(provider);
+    }
+
     /// 绑定监听、挂路由（GET {path} WS + GET /healthz）、启动消费者任务。
     pub async fn start(&self) -> std::io::Result<()> {
         {
@@ -545,6 +557,7 @@ impl OneBotServer {
 
         let app = Router::new()
             .route("/healthz", get(healthz))
+            .route("/metrics", get(metrics))
             .route(self.path.as_str(), get(ws_handler))
             .with_state(self.shared.clone());
 
@@ -667,6 +680,22 @@ async fn healthz(State(shared): State<Arc<Shared>>) -> Json<Value> {
         body["subsystems"] = Value::Array(subsystems);
     }
     Json(body)
+}
+
+async fn metrics(State(shared): State<Arc<Shared>>) -> Response {
+    let body = (shared.metrics_extra.lock().unwrap_or_else(PoisonError::into_inner))
+        .as_ref()
+        .map(|provider| provider())
+        .unwrap_or_default();
+    (
+        StatusCode::OK,
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
+        .into_response()
 }
 
 async fn ws_handler(

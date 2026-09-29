@@ -137,6 +137,9 @@ pub struct BridgeService {
     router: Arc<CommandRouter>,
     group_ids: Vec<i64>,
     game_seq: Arc<AtomicU64>,
+    /// 游戏→chatroom 写入计数（/metrics；post_game_message 成功/失败）。
+    game_forward_ok: AtomicU64,
+    game_forward_fail: AtomicU64,
     recent: Arc<RecentLog>,
     api: Arc<ApiServer>,
     /// chatroom 轮询子服务的 typed 句柄（注册消息回调用；生命周期走 subsystems）。
@@ -329,6 +332,8 @@ impl BridgeService {
                 router: Arc::new(router),
                 group_ids,
                 game_seq,
+                game_forward_ok: AtomicU64::new(0),
+                game_forward_fail: AtomicU64::new(0),
                 recent: Arc::new(RecentLog::new(RECENT_MESSAGES_CAP)),
             }
         });
@@ -367,6 +372,16 @@ impl BridgeService {
             .set_health_provider(Arc::new(move || {
                 weak.upgrade()
                     .map(|service| service.health_report())
+                    .unwrap_or_default()
+            }));
+
+        // /metrics 的指标回调（同款 Weak 解循环）
+        let weak = Arc::downgrade(&service);
+        service
+            .server()
+            .set_metrics_provider(Arc::new(move || {
+                weak.upgrade()
+                    .map(|service| service.render_metrics())
                     .unwrap_or_default()
             }));
 
@@ -443,6 +458,102 @@ impl BridgeService {
     pub fn health_report(&self) -> Vec<SubsystemHealth> {
         self.subsystems.iter().map(|s| s.health()).collect()
     }
+
+    /// Prometheus 文本格式指标（`GET /metrics`，与 /healthz 同在 6199 回环端口）。
+    /// 覆盖 roadmap v0.4 要求的三类：转发计数、失败计数、连接状态。
+    pub fn render_metrics(&self) -> String {
+        let forwarder = self.forwarder.stats();
+        let mut out = String::with_capacity(2048);
+        let counter = |out: &mut String, name: &str, help: &str, value: u64| {
+            out.push_str(&format!(
+                "# HELP chatroom_bridge_{name} {help}\n\
+                 # TYPE chatroom_bridge_{name} counter\n\
+                 chatroom_bridge_{name} {value}\n"
+            ));
+        };
+        counter(
+            &mut out,
+            "qq_forwarded_total",
+            "QQ 群消息成功转发到 chatroom 的条数",
+            forwarder.forwarded,
+        );
+        counter(
+            &mut out,
+            "qq_forward_failed_total",
+            "QQ 群消息转发 chatroom 失败的条数",
+            forwarder.failed,
+        );
+        counter(
+            &mut out,
+            "qq_forward_skipped_duplicate_total",
+            "因去重表命中而跳过转发的 QQ 群消息条数",
+            forwarder.skipped_duplicate,
+        );
+        counter(
+            &mut out,
+            "game_forwarded_total",
+            "游戏侧消息成功转发到 chatroom 的条数",
+            self.game_forward_ok.load(Ordering::Relaxed),
+        );
+        counter(
+            &mut out,
+            "game_forward_failed_total",
+            "游戏侧消息转发 chatroom 失败的条数",
+            self.game_forward_fail.load(Ordering::Relaxed),
+        );
+        counter(
+            &mut out,
+            "chatroom_poll_batches_total",
+            "chatroom 读方向轮询完成的批次数",
+            self.chatroom_poll.poll_batches(),
+        );
+
+        // 连接状态（gauge）：未启用不等于断连，enabled/connected 分开暴露
+        let gauge = |out: &mut String, name: &str, help: &str, value: u64| {
+            out.push_str(&format!(
+                "# HELP chatroom_bridge_{name} {help}\n\
+                 # TYPE chatroom_bridge_{name} gauge\n\
+                 chatroom_bridge_{name} {value}\n"
+            ));
+        };
+        gauge(
+            &mut out,
+            "onebot_connected",
+            "OneBot（NapCat 反向 WS）是否已连接（1/0）",
+            u64::from(self.server.connection().is_some()),
+        );
+        gauge(
+            &mut out,
+            "chatbridge_enabled",
+            "ChatBridge（游戏互通）是否启用（1/0）",
+            u64::from(self.chatbridge.is_some()),
+        );
+        gauge(
+            &mut out,
+            "chatbridge_connected",
+            "ChatBridge 是否已连接（1/0；未启用时恒为 0）",
+            u64::from(
+                self.chatbridge
+                    .as_ref()
+                    .map(|client| client.is_connected())
+                    .unwrap_or(false),
+            ),
+        );
+
+        // 命令响应计数（按命令名打标签；排序保证输出稳定）
+        let mut commands: Vec<(String, u64)> = self.commands.stats().into_iter().collect();
+        commands.sort();
+        if !commands.is_empty() {
+            out.push_str(
+                "# HELP chatroom_bridge_command_total 命令响应次数（按命令名）\n\
+                 # TYPE chatroom_bridge_command_total counter\n",
+            );
+            for (name, count) in commands {
+                out.push_str(&format!("chatroom_bridge_command_total{{name=\"{name}\"}} {count}\n"));
+            }
+        }
+        out
+    }
 }
 
 // --- 子服务实现：统一生命周期与健康检查（见 crate::subsystem） ---
@@ -488,6 +599,8 @@ struct ChatroomPollSubsystem {
     /// 无 refresh_token 时轮询不启动（与旧行为一致）。
     token_present: bool,
     interval: Duration,
+    /// 已完成的轮询批次数（/metrics）。
+    poll_batches: Arc<AtomicU64>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     on_messages: Mutex<Option<Arc<ChatroomMessagesHandler>>>,
 }
@@ -498,6 +611,7 @@ impl ChatroomPollSubsystem {
             reader,
             token_present,
             interval,
+            poll_batches: Arc::new(AtomicU64::new(0)),
             task: Mutex::new(None),
             on_messages: Mutex::new(None),
         }
@@ -505,6 +619,11 @@ impl ChatroomPollSubsystem {
 
     fn set_on_messages(&self, handler: Arc<ChatroomMessagesHandler>) {
         *self.on_messages.lock().unwrap() = Some(handler);
+    }
+
+    /// 已完成的轮询批次数（/metrics 用）。
+    fn poll_batches(&self) -> u64 {
+        self.poll_batches.load(Ordering::Relaxed)
     }
 }
 
@@ -521,9 +640,11 @@ impl Subsystem for ChatroomPollSubsystem {
         let reader = self.reader.clone();
         let on_messages = self.on_messages.lock().unwrap().clone();
         let interval = self.interval;
+        let poll_batches = self.poll_batches.clone();
         let task = tokio::spawn(async move {
             loop {
                 let messages = reader.poll_once().await;
+                poll_batches.fetch_add(1, Ordering::Relaxed);
                 if let Some(on_messages) = &on_messages {
                     on_messages(messages).await;
                 }
@@ -824,6 +945,22 @@ mod tests {
         // 统一生命周期：顺序 start（含 http-api 随机端口绑定）、逆序 stop
         service.start().await.unwrap();
         assert!(service.api_local_addr().is_some());
+
+        // /metrics 渲染：counter / gauge 行齐全；命令计数族只在实际有命令执行
+        // 后才输出（stats 为空时整族缺席）
+        let metrics = service.render_metrics();
+        for expected in [
+            "chatroom_bridge_qq_forwarded_total",
+            "chatroom_bridge_qq_forward_failed_total",
+            "chatroom_bridge_game_forwarded_total",
+            "chatroom_bridge_chatroom_poll_batches_total",
+            "chatroom_bridge_onebot_connected",
+            "chatroom_bridge_chatbridge_enabled",
+            "chatroom_bridge_chatbridge_connected",
+        ] {
+            assert!(metrics.contains(expected), "metrics 缺少 {expected}:\n{metrics}");
+        }
+
         service.stop().await;
     }
 }

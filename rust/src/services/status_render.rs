@@ -8,7 +8,7 @@
 //! 视觉常量照抄旧 `status.html`（见 git 历史 bff03e2）的 CSS，目标是与
 //! Chromium 渲染“肉眼接近”。
 
-use std::sync::{Mutex, OnceLock, PoisonError};
+use std::sync::{Mutex, OnceLock};
 
 use base64::Engine as _;
 use cosmic_text::fontdb;
@@ -213,8 +213,6 @@ fn cover_canvas(iw: u32, ih: u32) -> Option<image::RgbaImage> {
 
 /// 全分辨率下的高斯 sigma（与原 `blur_region` 的 `sigma=20` 保持一致）。
 const BG_BLUR_SIGMA: f32 = 20.0;
-/// 预模糊画布缓存条数上限（实际画布尺寸基本固定，1 条即可命中）。
-const BG_CACHE_CAP: usize = 3;
 
 /// 整幅高斯模糊：降采样 1/4 → σ/4 高斯 → 放大回原尺寸（与旧逻辑同参，效果一致）。
 fn blur_canvas(sharp: &image::RgbaImage) -> image::RgbaImage {
@@ -225,38 +223,6 @@ fn blur_canvas(sharp: &image::RgbaImage) -> image::RgbaImage {
     let small = image::imageops::resize(sharp, dw, dh, image::imageops::FilterType::Triangle);
     let bl = imageproc::filter::gaussian_blur_f32(&small, BG_BLUR_SIGMA / DOWN as f32);
     image::imageops::resize(&bl, iw, ih, image::imageops::FilterType::Triangle)
-}
-
-fn blurred_cache() -> &'static Mutex<Vec<((u32, u32), std::sync::Arc<image::RgbaImage>)>> {
-    static C: OnceLock<Mutex<Vec<((u32, u32), std::sync::Arc<image::RgbaImage>)>>> = OnceLock::new();
-    C.get_or_init(|| Mutex::new(Vec::new()))
-}
-
-/// 取指定画布尺寸的**预模糊**画布：命中缓存直接复用，未命中则用 `build` 现算并缓存。
-/// 只缓存模糊结果（省去每次渲染重算高斯）；清晰画布由调用方按需现算后再叠加。
-fn blurred_background(
-    iw: u32,
-    ih: u32,
-    build: impl FnOnce() -> image::RgbaImage,
-) -> std::sync::Arc<image::RgbaImage> {
-    let cache = blurred_cache();
-    {
-        let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(pos) = guard.iter().position(|(k, _)| *k == (iw, ih)) {
-            // 命中：提到末尾（最近使用）
-            let entry = guard.remove(pos);
-            let arc = entry.1.clone();
-            guard.push(entry);
-            return arc;
-        }
-    }
-    let blurred = std::sync::Arc::new(build());
-    let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
-    if guard.len() >= BG_CACHE_CAP {
-        guard.remove(0); // 淘汰最旧
-    }
-    guard.push(((iw, ih), blurred.clone()));
-    blurred
 }
 
 // ---------------------------- 文本整形 ----------------------------
@@ -943,12 +909,14 @@ fn rasterize(
     let (iw, ih) = (w.round() as u32, h.round() as u32);
     let (iw, ih) = (iw.max(1), ih.max(1));
 
-    // 清晰画布每次现算（不常驻）；模糊结果按尺寸缓存复用
+    // 清晰画布每次现算；模糊也现算、用完即释放（渲染稀疏，无需常驻缓存）
     let mut canvas = cover_canvas(iw, ih)
         .ok_or_else(|| RenderError::Background("解码失败".into()))?;
-    let blurred = blurred_background(iw, ih, || blur_canvas(&canvas));
-    // 面板矩形用预模糊结果覆盖（整幅已模糊，边缘无接缝，无需外扩）
-    paste_region(&mut canvas, &blurred, panel_x, panel_y, panel_w, panel_h);
+    {
+        let blurred = blur_canvas(&canvas);
+        // 面板矩形用模糊结果覆盖（整幅已模糊，边缘无接缝，无需外扩）
+        paste_region(&mut canvas, &blurred, panel_x, panel_y, panel_w, panel_h);
+    }
 
     let mut pixmap = tiny_skia::Pixmap::from_vec(canvas.into_raw(), tiny_skia::IntSize::from_wh(iw, ih).ok_or_else(|| RenderError::Raster("尺寸非法".into()))?)
         .ok_or_else(|| RenderError::Raster("画布创建失败".into()))?;

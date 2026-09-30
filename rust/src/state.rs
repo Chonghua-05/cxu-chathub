@@ -136,17 +136,21 @@ impl StateStore {
     }
 
     pub fn mark_forwarded(&self, source_message_id: &str, chatroom_message_id: i64) {
-        let mut guard = match self.inner.lock() {
-            Ok(guard) => guard,
+        // 锁内只改内存态并拍快照，磁盘写入（临时文件 + fsync + 替换）在锁外——
+        // 与 set_last_read_message_id 等其余 setter 同款，避免磁盘延迟阻塞其他读写。
+        let state = match self.inner.lock() {
+            Ok(mut guard) => {
+                guard
+                    .forwarded
+                    .insert(source_message_id.to_string(), chatroom_message_id);
+                while guard.forwarded.len() > self.max_forwarded {
+                    guard.forwarded.shift_remove_index(0);
+                }
+                Self::snapshot_file(&guard)
+            }
             Err(_) => return,
         };
-        guard
-            .forwarded
-            .insert(source_message_id.to_string(), chatroom_message_id);
-        while guard.forwarded.len() > self.max_forwarded {
-            guard.forwarded.shift_remove_index(0);
-        }
-        self.flush(&Self::snapshot_file(&guard));
+        self.flush(&state);
     }
 
     // --- 读游标 ---

@@ -120,6 +120,14 @@ fn swash_cache() -> &'static Mutex<SwashCache> {
     SC.get_or_init(|| Mutex::new(SwashCache::new()))
 }
 
+/// 渲染并发上限：渲染是纯 CPU 活且全程持有全局字体锁，串行足够；
+/// 多个并发调用方在此排队，避免同时占多个 blocking 线程并互相争抢字体锁。
+static RENDER_PERMIT: OnceLock<tokio::sync::Semaphore> = OnceLock::new();
+
+fn render_permit() -> &'static tokio::sync::Semaphore {
+    RENDER_PERMIT.get_or_init(|| tokio::sync::Semaphore::new(1))
+}
+
 /// 背景图解码（原图；仅在做 cover 缩放时解码，不长期常驻）。
 fn decode_background() -> Option<image::DynamicImage> {
     image::load_from_memory(BACKGROUND_JPG).ok()
@@ -555,6 +563,9 @@ fn grid_metrics(fs: &mut FontSystem, cards: &[Card]) -> (f32, f32) {
 }
 
 /// 渲染状态图为 PNG。数据非对象时返回 None（上层回退文本）。
+///
+/// 渲染是同步 CPU 活（字体整形 / SVG / 光栅化 / PNG 编码）且全程持有全局字体锁：
+/// 丢进 `spawn_blocking` 执行不占异步 worker；信号量（1）保证最多一个渲染在途。
 pub async fn render_status_png(
     data: &Value,
     addresses: Option<&[(String, String)]>,
@@ -562,10 +573,18 @@ pub async fn render_status_png(
     if !data.is_object() {
         return None;
     }
-    match render(data, addresses) {
-        Ok(png) => Some(png),
-        Err(err) => {
+    // 状态 JSON 只有几 KB，clone 一次换取 'static 闭包
+    let data = data.clone();
+    let addresses = addresses.map(|list| list.to_vec());
+    let _permit = render_permit().acquire().await.ok()?;
+    match tokio::task::spawn_blocking(move || render(&data, addresses.as_deref())).await {
+        Ok(Ok(png)) => Some(png),
+        Ok(Err(err)) => {
             tracing::warn!("状态图渲染失败，回退文本: {err}");
+            None
+        }
+        Err(err) => {
+            tracing::warn!("状态图渲染任务异常结束，回退文本: {err}");
             None
         }
     }

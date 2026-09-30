@@ -138,6 +138,14 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
       不再需要 Chromium
 - [x] **文档**：清理 Chromium / `status-image` 残留；包版本号 `0.2.0` → `0.6.0`
 
+## v0.6.1 —— 代码清理与文档对齐（已完成，2026-09-30）
+
+- [x] **移除已下线的 Python 版**：删除 `src/`、`tests/`、`requirements.txt`、根 `Dockerfile`，
+      仓库结构与 README 一致；回滚参照走 git 历史 `f5dc1e9`
+- [x] **渲染迁移遗留精简**：收敛 `status_render` / `patch_broadcast` 的公共表面，去除冗余与死代码
+- [x] **清理已删实现的引用**：`rust/src/**` 注释改为行为约定描述
+- [x] **文档对齐代码**：webui 技术栈（Rust + axum）、配置字段、模块表
+
 ## 更远
 
 - [ ] Publish 到 crates.io，支持以库的形式嵌入其他服务

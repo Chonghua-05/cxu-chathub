@@ -122,6 +122,24 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
 - [ ] **可选增强**：消息实时推送（SSE 数据源换主服务 `/api/events`）、反代 TLS、
       多用户审计
 
+## v0.6.0 —— 渲染去 Chromium（已完成，2026-09-30）
+
+接续 v0.5：`/server`、`/status` 状态图与 v0.5 播报长图原本都走 headless Chromium
+截图，本轮整体迁移到**纯 Rust 渲染管线**（`cosmic-text` 整形 → glyph path → SVG →
+`resvg` 光栅化），彻底移除 Chromium 常驻。
+
+- [x] **状态图**：`services/status_render.rs` 重写——文本用 cosmic-text 完整整形后
+      逐 glyph 转 `<path>`（测量与渲染同源），毛玻璃改为面板内局部高斯模糊
+      （1/4 降采样、面板外保留原图）；宽度复刻 CSS `fit-content`
+- [x] **播报长图**：改黑底白字极简排版（900px 宽、高度自适应）；HTML 粗剥离为文本块
+      （不引解析库），渲染失败自动降级为纯文本节点，不丢消息
+- [x] **依赖**：删除 `headless_chrome` 与 `status-image` feature；新增
+      `cosmic-text` / `resvg` / `imageproc`
+- [x] **资源**：容器内存上限 1.2G → 256M；进程空载 **70MB → 8MB**、渲染峰值
+      **105MB**、二进制 **16.9MB**；运行镜像只需中文字体（`fonts-noto-cjk`），
+      不再需要 Chromium
+- [x] **文档**：清理 Chromium / `status-image` 残留；包版本号 `0.2.0` → `0.6.0`
+
 ## 更远
 
 - [ ] Publish 到 PyPI，支持 `pip install` 后以库的形式嵌入其他服务

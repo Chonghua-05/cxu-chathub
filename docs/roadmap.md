@@ -146,6 +146,14 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
 - [x] **清理已删实现的引用**：`rust/src/**` 注释改为行为约定描述
 - [x] **文档对齐代码**：webui 技术栈（Rust + axum）、配置字段、模块表
 
+## v0.6.2 —— 依赖与重复片段清理（已完成，2026-09-30）
+
+- [x] **移除未用依赖**：`chrono`、`cbc`（CBC 由 `aes` 块操作 + 手写链接实现）
+- [x] **收敛重复逻辑**：三端落库统一走 `post_with_seq`（game / chatroom / hub 共用）；
+      上下线事件抽 `first_capture`；`truncate_chars` 四处副本收敛到 crate 根；
+      HTTP 客户端构造统一为 `http_client`（逐点保留原 timeout/UA，行为不变）
+- [x] **删冗余**：`CommandRouter::new`（`#[derive(Default)]` 已覆盖）；模块文档对齐当前实现
+
 ## 更远
 
 - [ ] Publish 到 crates.io，支持以库的形式嵌入其他服务

@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "chatroom-bridge"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aes",
  "async-trait",

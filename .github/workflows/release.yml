@@ -43,10 +43,10 @@ jobs:
           fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
-            ## 中文
+            <!-- 本版本要点（按需填写）：亮点 / 破坏性变更 / 迁移提示。
+                 只写面向使用者的变更，不写自身部署实况。
+                 Fill in highlights / breaking changes / migration notes if any —
+                 user-facing changes only, no deployment specifics. -->
 
-            本版本变更见下方自动生成的提交列表。
-
-            ## English
-
-            See the auto-generated change list below.
+            > 变更细节见下方自动生成的提交列表。
+            > See the auto-generated change list below.

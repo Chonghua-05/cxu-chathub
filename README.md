@@ -4,11 +4,11 @@
 > 并为后续的社区服务与 Agent 能力提供常驻底座。
 
 前身是某个聊天机器人框架的 chatroom 追踪插件。现已独立为**无 AI 依赖**的 Rust 单进程
-服务（`rust/`，包 `chatroom-bridge`），跑在云主机 Docker 上，与旧框架和 AI 服务完全解耦。
+服务（`rust/`，包 `chatroom-bridge`），以容器方式部署，与旧框架和 AI 服务完全解耦。
 
 - 仓库名：`cxu-chathub`
-- 容器名 `chatroom-bridge`（沿用旧名，避免打断线上部署）
-- 版本：`0.6.2`（Rust 实现，唯一线上版本）
+- 二进制 / 容器名：`chatroom-bridge`
+- 版本：`0.6.2`（Rust 实现）
 
 ---
 
@@ -24,11 +24,10 @@
 
 设计要点：
 
-- **零 AI 依赖**：Rust 单进程（tokio + axum），空载常驻约 8MB、渲染峰值约 105MB，容器内存上限 256M。
+- **零 AI 依赖**：Rust 单进程（tokio + axum），无外部 AI 服务与浏览器依赖。
 - **渲染无 Chromium**：`/server` 状态图与播报长图由纯 Rust 渲染（cosmic-text → SVG → resvg）。
 - **单进程、无状态外部依赖**：去重表与读游标落在 `state.json`（原子写、损坏自愈）。
-- **复用已有链路**：直接监听 `127.0.0.1:6199`，即 NapCat 中「NapCat 客户端」客户端原本指向的地址，
-  切换时不需要动 NapCat 配置、不需要放行新端口。
+- **复用既有链路**：OneBot 反向 WS 监听 `127.0.0.1:6199`，与 NapCat 客户端的默认接入地址一致。
 
 ---
 
@@ -92,9 +91,9 @@ Docker 部署与切流顺序见 [`docs/deployment.md`](docs/deployment.md)；
 
 ## 实现（`rust/`）
 
-本服务为 **Rust 单进程**（tokio + axum）。`config.json` / `state.json` 与旧实现
-格式兼容，数据目录零改动。`/server` 状态图与播报长图已从 Chromium 迁移为纯 Rust 渲染
-（cosmic-text → SVG → resvg），镜像不再需要 Chromium（见 `docs/roadmap.md` v0.6）。
+本服务为 **Rust 单进程**（tokio + axum）。`config.json` / `state.json` 为纯文本配置与
+状态文件（原子写、损坏自愈）。`/server` 状态图与播报长图由纯 Rust 渲染
+（cosmic-text → SVG → resvg），无需 Chromium（见 `docs/roadmap.md` v0.6）。
 
 | 模块 | 作用 |
 |------|------|
@@ -120,10 +119,10 @@ cargo build --release
 # 状态图渲染已内置（纯 Rust），无需额外 feature / 系统依赖
 ```
 
-Agent 能力（`!mc` / `!wiki` / `!tmc`，下一阶段）的扩展点设计见
-[`docs/agent-design.md`](docs/agent-design.md)：新技能 = 一个 `CommandHandler` +
-一个 `DocumentSource`，注册进路由即可接入三端；未来智能路由（LLM）只替换匹配策略，
-不动 handler 与出站接口。
+Agent 能力（`!mc` / `!wiki` / `!tmc` 等，命令与文档源由 `agent.skills` 配置注册）的
+扩展点设计见 [`docs/agent-design.md`](docs/agent-design.md)：新技能 = 一个
+`CommandHandler` + 一个 `DocumentSource`，注册进路由即可接入三端；智能路由（LLM）
+只替换匹配策略，不动 handler 与出站接口。
 
 ---
 
@@ -159,7 +158,7 @@ cargo test                 # 单元 + WS 集成 + e2e 冒烟
   只从 `config.json` 读取：**不写日志、不进 git、不出现在聊天里**（`describe()` 打摘要时自动打码）。
 - `config.json`、`state.json`、`data/` 已在 `.gitignore` 中；提交前请再确认一次（`git status`）。
 - HTTP 服务只绑宿主机回环 `127.0.0.1:6199`，不对外暴露端口。
-- 端口 `6199` 若被旧框架容器占用，需先停掉旧框架（见部署文档）。
+- 端口 `6199` 需独占；部署前确认无其他进程占用（见部署文档）。
 
 ## Web 控制台
 

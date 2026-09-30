@@ -37,3 +37,111 @@ pub(crate) fn http_client(total_s: u64, connect_s: Option<u64>) -> reqwest::Clie
         None => builder,
     }
 }
+
+/// 读取 HTTP 响应体并强制大小上限（字节）。先看 `Content-Length`（服务端诚实
+/// 声明时提前拒绝），再流式累计兜底（防谎报 / 缺失长度头的响应撑爆内存）。
+/// 错误统一收敛为 `Err(String)`，由调用方走各自的降级路径。
+pub(crate) async fn read_body_capped(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+) -> Result<Vec<u8>, String> {
+    if let Some(len) = response.content_length() {
+        if len > max_bytes as u64 {
+            return Err(format!("响应体 {len} 字节超过上限 {max_bytes}"));
+        }
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| format!("读取响应体失败: {err}"))?
+    {
+        if body.len() + chunk.len() > max_bytes {
+            return Err(format!("响应体超过上限 {max_bytes} 字节（流式读取中止）"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_body_capped;
+
+    use axum::body::{Body, Bytes};
+    use axum::response::Response;
+    use futures_util::stream;
+
+    /// 起一个只对 GET /data 回固定响应体的本地服务，返回其地址。
+    async fn spawn_body_server(
+        make_body: impl Fn() -> Response + Clone + Send + Sync + 'static,
+    ) -> std::net::SocketAddr {
+        let app = axum::Router::new().route(
+            "/data",
+            axum::routing::get(move || std::future::ready(make_body())),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn reads_body_within_cap() {
+        let addr = spawn_body_server(|| {
+            Response::builder()
+                .body(Body::from(vec![0u8; 100]))
+                .unwrap()
+        })
+        .await;
+        let response = reqwest::get(format!("http://{addr}/data")).await.unwrap();
+        let body = read_body_capped(response, 1_000).await.unwrap();
+        assert_eq!(body.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_content_length_upfront() {
+        let addr = spawn_body_server(|| {
+            Response::builder()
+                .body(Body::from(vec![0u8; 2_000]))
+                .unwrap()
+        })
+        .await;
+        let response = reqwest::get(format!("http://{addr}/data")).await.unwrap();
+        let err = read_body_capped(response, 1_000).await.unwrap_err();
+        assert!(err.contains("超过上限"), "应报超限: {err}");
+    }
+
+    #[tokio::test]
+    async fn reads_chunked_body_within_cap() {
+        // Body::from_stream 不带 Content-Length（chunked），走流式累计路径
+        let addr = spawn_body_server(|| {
+            Response::builder()
+                .body(Body::from_stream(stream::iter([[0u8; 300], [1u8; 300]].map(
+                    |chunk| Ok::<Bytes, std::io::Error>(Bytes::from(chunk.to_vec())),
+                ))))
+                .unwrap()
+        })
+        .await;
+        let response = reqwest::get(format!("http://{addr}/data")).await.unwrap();
+        let body = read_body_capped(response, 1_000).await.unwrap();
+        assert_eq!(body.len(), 600);
+    }
+
+    #[tokio::test]
+    async fn aborts_oversized_chunked_body() {
+        let addr = spawn_body_server(|| {
+            Response::builder()
+                .body(Body::from_stream(stream::iter((0..3).map(|_| {
+                    Ok::<Bytes, std::io::Error>(Bytes::from(vec![0u8; 500]))
+                }))))
+                .unwrap()
+        })
+        .await;
+        let response = reqwest::get(format!("http://{addr}/data")).await.unwrap();
+        let err = read_body_capped(response, 1_000).await.unwrap_err();
+        assert!(err.contains("超过上限"), "流式超限应中止: {err}");
+    }
+}

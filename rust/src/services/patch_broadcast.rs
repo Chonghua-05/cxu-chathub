@@ -44,6 +44,12 @@ const TRANSLATE_PROMPT: &str = "你是 Minecraft 更新公告的翻译器。把�
 /// 纯文本降级时摘录的长度上限（UTF-8 安全截断）。
 const TEXT_FALLBACK_MAX_CHARS: usize = 1500;
 
+/// 版本 feed JSON 响应体上限（流式强制；正常远小于此，防异常响应撑内存）。
+const MAX_FEED_BYTES: usize = 8 * 1024 * 1024;
+
+/// 单条更新正文响应体上限（流式强制；防异常响应撑内存）。
+const MAX_PATCH_BODY_BYTES: usize = 2 * 1024 * 1024;
+
 /// 单轮待播报条目数的安全上限：超过视为 feed 异常（重置 / 裁剪导致已播报
 /// 条目消失），只记录基线不播报——防止把整份历史当新版本倒进群里。
 const MAX_BURST_ANNOUNCEMENTS: usize = 10;
@@ -201,14 +207,17 @@ impl PatchBroadcaster {
             }
         };
         let raw = match response.error_for_status() {
-            Ok(response) => response.text().await,
+            // 流式读取并强制上限，防异常大响应撑内存；超限按拉取失败降级
+            Ok(response) => crate::read_body_capped(response, MAX_FEED_BYTES)
+                .await
+                .map(|body| String::from_utf8_lossy(&body).into_owned()),
             Err(err) => {
                 warn!(url = %self.cfg.feed_url, error = %err, "版本更新 feed 返回错误状态");
                 return None;
             }
         };
         let Ok(raw) = raw else {
-            warn!("版本更新 feed 响应读取失败");
+            warn!("版本更新 feed 响应读取失败或超过大小上限");
             return None;
         };
         match serde_json::from_str::<FeedList>(strip_bom(&raw)) {
@@ -230,14 +239,16 @@ impl PatchBroadcaster {
             }
         };
         let raw = match response.error_for_status() {
-            Ok(response) => response.text().await,
+            Ok(response) => crate::read_body_capped(response, MAX_PATCH_BODY_BYTES)
+                .await
+                .map(|body| String::from_utf8_lossy(&body).into_owned()),
             Err(err) => {
                 warn!(id = %entry.id, url = %url, error = %err, "更新正文返回错误状态");
                 return None;
             }
         };
         let Ok(raw) = raw else {
-            warn!(id = %entry.id, "更新正文响应读取失败");
+            warn!(id = %entry.id, "更新正文响应读取失败或超过大小上限");
             return None;
         };
         match serde_json::from_str::<EntryBody>(strip_bom(&raw)) {

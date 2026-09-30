@@ -21,6 +21,9 @@ pub const DEFAULT_SERVER_ADDRESSES: [(&str, &str); 2] = [
     ("备用地址", "backup.example.com:25565"),
 ];
 
+/// 状态 / 语音 API JSON 响应体上限（流式强制；正常远小于此，防异常响应撑内存）。
+const MAX_STATUS_JSON_BYTES: usize = 4 * 1024 * 1024;
+
 /// 命令响应：文本或图片（图片优先）。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CommandResult {
@@ -281,7 +284,7 @@ impl CommandService {
         })
     }
 
-    /// 非 200 → 警告日志 + Null；reqwest 客户端/网络错误 → Null；
+    /// 非 200 → 警告日志 + Null；reqwest 客户端/网络错误或响应超限 → Null；
     /// 成功 → 解析 JSON。
     /// 格式化函数拿到 Null 后产出「无法获取…」文案。
     async fn get_json(&self, url: &str) -> Value {
@@ -296,7 +299,15 @@ impl CommandService {
             tracing::warn!("命令查询失败 {} HTTP {}", url, response.status().as_u16());
             return Value::Null;
         }
-        match response.json::<Value>().await {
+        // 流式读取并强制上限：状态 API 异常大响应不进内存，按「无法获取」降级
+        let body = match crate::read_body_capped(response, MAX_STATUS_JSON_BYTES).await {
+            Ok(body) => body,
+            Err(err) => {
+                tracing::warn!("命令响应读取失败 {}: {}", url, err);
+                return Value::Null;
+            }
+        };
+        match serde_json::from_slice::<Value>(&body) {
             Ok(data) => data,
             // JSON 解析失败 → 回退 Null（产出「无法获取…」文案）
             Err(err) => {

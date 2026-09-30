@@ -36,6 +36,10 @@ const REFRESH_SECS: u64 = 24 * 60 * 60;
 /// 下载超时。
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// tarball 压缩包大小上限（下载阶段流式强制）。正常文档仓库远小于此；
+/// 防异常大响应在 256MB 容器里撑爆内存。超限走「保留旧缓存」降级路径。
+const MAX_TARBALL_BYTES: usize = 64 * 1024 * 1024;
+
 /// 委托给本地检索的文档扩展名白名单。
 const DOC_EXTENSIONS: &[&str] = &[".md", ".markdown", ".mdx", ".txt"];
 
@@ -181,10 +185,8 @@ impl RepoSource {
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|err| format!("读取响应体失败: {err}"))?;
+        // 读取阶段流式强制大小上限，防异常大响应整包进内存
+        let bytes = crate::read_body_capped(resp, MAX_TARBALL_BYTES).await?;
         // 解压是阻塞的磁盘活：tarball 已在内存，丢进 spawn_blocking 不卡异步线程。
         let cache_dir = self.cache_dir.clone();
         let extracted = tokio::task::spawn_blocking(move || extract_tarball(&bytes, &cache_dir))

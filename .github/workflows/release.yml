@@ -1,0 +1,52 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build x86_64-unknown-linux-gnu
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-unknown-linux-gnu
+
+      - name: Package
+        run: |
+          tar -czf "chatroom-bridge-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz" \
+            -C target/x86_64-unknown-linux-gnu/release chatroom-bridge
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rust/chatroom-bridge-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            ## 中文
+
+            本版本变更见下方自动生成的提交列表。
+
+            ## English
+
+            See the auto-generated change list below.

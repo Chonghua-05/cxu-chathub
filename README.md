@@ -8,7 +8,7 @@
 
 - 仓库名：`cxu-chathub`
 - 二进制 / 容器名：`chatroom-bridge`
-- 版本：`0.6.2`（Rust 实现）
+- 版本：`0.6.3`（Rust 实现）
 
 ---
 

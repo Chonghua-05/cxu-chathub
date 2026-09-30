@@ -79,8 +79,8 @@ docker compose up -d --build
 服务为 **Rust 单进程**（`rust/`，包 `chatroom-bridge`）；`config.json` / `state.json`
 格式与旧实现兼容，数据目录无需迁移，NapCat 侧零改动。
 
-- `rust/Dockerfile` 为多阶段构建；运行镜像仅装 Noto CJK 中文字体（无 Chromium，镜像约 80MB）。
-  Rust 进程空载常驻约 8MB 级、渲染峰值约 105MB。
+- `rust/Dockerfile` 为多阶段构建；运行镜像用 Noto Sans CJK SC **子集**字体（无 Chromium）。
+  Rust 进程空载常驻约 8MB 级、渲染峰值约 30MB（随图片高度增长），渲染完成后即回落。
 - 额外监听 **HTTP API `127.0.0.1:8199`**（配置段 `api`，默认开启在回环上）。容器内已监听，
   compose 未映射该端口——需要给 Web UI / 其他站点用时再加 `127.0.0.1:8199:8199` 映射或走反代，
   并先配好 `api.access_token`。见 [`docs/api-design.md`](api-design.md)。

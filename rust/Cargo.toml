@@ -1,6 +1,6 @@
 [package]
 name = "chatroom-bridge"
-version = "0.6.2"
+version = "0.6.3"
 edition = "2021"
 description = "cxu-chathub 消息中枢（QQ 群 / chatroom / MC 三端互通）的 Rust 实现"
 license = "MIT"

@@ -1,5 +1,6 @@
 # chatroom-bridge（Rust 版）镜像
-# 镜像体积预期：约 80MB（状态图渲染为纯 Rust，不再需要 Chromium；仅额外装中文字体）。
+# 状态图渲染为纯 Rust（不再需要 Chromium）；中文用 Noto Sans CJK SC 子集字体（约 200KB），
+# 不装完整 fonts-noto-cjk（见 tools/make_font_subset.py）。
 # 多阶段构建：rust:1-slim 只负责编译，运行时基于 debian-slim，最终镜像不含工具链。
 # 注意：构建上下文是仓库根目录（docker-compose.yml: context ., dockerfile rust/Dockerfile），
 #       所以 COPY 路径都带 rust/ 前缀。

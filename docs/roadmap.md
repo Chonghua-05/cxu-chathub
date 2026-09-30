@@ -154,6 +154,22 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
       HTTP 客户端构造统一为 `http_client`（逐点保留原 timeout/UA，行为不变）
 - [x] **删冗余**：`CommandRouter::new`（`#[derive(Default)]` 已覆盖）；模块文档对齐当前实现
 
+## v0.6.3 —— 状态图渲染内存优化（已完成，2026-09-30）
+
+`/server` 状态图渲染的内存此前主要集中在三处：`image` crate 的 Lanczos 缩放（内部按目标
+尺寸开 ~4× 的 f32 中间缓冲）、SVG 的 `feDropShadow` filter（另开一张全尺寸位图）、以及完整
+`fonts-noto-cjk` 被 fontdb 整体载入。逐项消除：
+
+- [x] **字体子集**：中文改用 Noto Sans CJK SC 子集（只含状态图会出现的字形，约 200KB），
+      运行镜像不再装 `fonts-noto-cjk`（4 个 ttc ≈93MB）；生成脚本 `tools/make_font_subset.py`
+- [x] **背景预裁**：新增「横向成品」背景条（`templates/status-bg-strip.png`，宽 = 画布宽），
+      运行时按高度裁剪，运行时不再做 Lanczos 缩放；生成脚本 `rust/examples/gen_strip.rs`
+- [x] **阴影近似**：`feDropShadow` → 多层向外扩展的描边环（只落在面板外侧），避免 SVG filter 的全尺寸位图
+- [x] **回退路径**：先裁可见区域再缩放，并改用无大缓冲的双线性缩放（`resize_bilinear`）
+- [x] **不缓存**：渲染稀疏、产物一次性发群，模糊现算即释放，不留常驻缓存
+- [x] **资源**（779×2240 实测）：渲染峰值 **105MB → 约 30MB**、渲染后常驻 **34MB → 17MB**
+      （其中匿名内存约 3MB）；运行镜像 **216MB → 122MB**、二进制 18.0MB；容器内存上限维持 256M
+
 ## 更远
 
 - [ ] Publish 到 crates.io，支持以库的形式嵌入其他服务

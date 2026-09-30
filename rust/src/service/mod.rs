@@ -19,7 +19,6 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use base64::Engine as _;
 use futures_util::future::BoxFuture;
 use serde::Serialize;
 use serde_json::Value;
@@ -100,7 +99,7 @@ impl RecentLog {
                 .unwrap_or(0),
             source: source.to_string(),
             from: from.to_string(),
-            text: truncate_inline(text, RECENT_MESSAGE_TEXT_MAX),
+            text: crate::truncate_chars(text, RECENT_MESSAGE_TEXT_MAX),
         });
         while inner.items.len() > self.cap {
             inner.items.pop_front();
@@ -116,18 +115,10 @@ impl RecentLog {
         inner.items.iter().skip(skip).cloned().collect()
     }
 
+    /// 当前缓冲条数（/api/status 的 recent_messages）。
     pub fn len(&self) -> usize {
         self.inner.lock().map(|i| i.items.len()).unwrap_or(0)
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-/// 单行截断（不加省略号）；供近期消息缓冲与日志预览用。
-pub(crate) fn truncate_inline(s: &str, max: usize) -> String {
-    crate::truncate_chars(s, max)
 }
 
 /// 三端落库共用：合成 `source_message_id`（前缀 + 毫秒时间戳 + 自增序号）后写向
@@ -989,21 +980,6 @@ impl Hub for BridgeService {
                 }
             }
             None => self.send_to_qq_groups(text).await,
-        }
-    }
-
-    async fn qq_send_image(&self, group_id: i64, png: &[u8]) -> bool {
-        let Some(conn) = self.server.connection() else {
-            warn!("QQ 未连接，图片发送跳过");
-            return false;
-        };
-        let data_uri = format!("base64://{}", base64::engine::general_purpose::STANDARD.encode(png));
-        match conn.send_group_image(group_id, &data_uri).await {
-            Ok(_) => true,
-            Err(err) => {
-                error!("发送 QQ 图片到群 {group_id} 失败: {err}");
-                false
-            }
         }
     }
 

@@ -38,7 +38,6 @@ impl BridgeService {
             text: content.to_string(),
             group_id: 0,
             user_id: 0,
-            display_name: nickname.to_string(),
             at_me: false,
         };
         let sink = GameReplySink(self.chatbridge.clone());

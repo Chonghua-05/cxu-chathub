@@ -166,7 +166,6 @@ impl CommandHandler for LlmSkillRouter {
             text: format!("{} {}", skill.info.trigger, ctx.msg.text.trim()),
             group_id: ctx.msg.group_id,
             user_id: ctx.msg.user_id,
-            display_name: ctx.msg.display_name.clone(),
             at_me: ctx.msg.at_me,
         };
         let routed_ctx = DispatchCtx {
@@ -237,7 +236,6 @@ mod tests {
             text: text.into(),
             group_id,
             user_id: 2,
-            display_name: "tester".into(),
             at_me: true,
         }
     }
@@ -279,7 +277,6 @@ mod tests {
     #[async_trait]
     impl Hub for NoopHub {
         async fn qq_send_text(&self, _: Option<i64>, _: &str) -> bool { true }
-        async fn qq_send_image(&self, _: i64, _: &[u8]) -> bool { false }
         async fn game_broadcast(&self, _: &str) -> bool { false }
         async fn chatroom_post(&self, _: &str, _: &str, _: &str, _: &str) -> bool { false }
     }
@@ -390,7 +387,6 @@ mod tests {
             text: "活塞怎么防冲水".into(),
             group_id: 0,
             user_id: 0,
-            display_name: "bob".into(),
             at_me: false,
         })); // 游戏来源不参与路由
     }

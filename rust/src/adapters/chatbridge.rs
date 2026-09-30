@@ -49,8 +49,6 @@ pub const CONNECT_TIMEOUT: u64 = 20;
 
 /// 聊天回调：`(sender, author, message)`，内联等待。
 pub type ChatCallback = Arc<dyn Fn(String, String, String) -> BoxFuture<'static, ()> + Send + Sync>;
-/// 连接状态回调（on_connected / on_disconnected 共用）。
-pub type StateCallback = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
 
 /// 与 ChatBridge 兼容的 AES-CBC（SHA256 派生密钥、零填充、hex 输出）。
 pub struct AesCryptor {
@@ -235,7 +233,7 @@ fn py_str(value: Option<&Value>) -> String {
 }
 
 /// 客户端共享内部状态（`ChatBridgeClient` 内部持有 `Arc<Inner>`，供收包循环、
-/// keep-alive 任务与外部 send_chat 并发使用）。
+/// keep-alive 任务与外部 broadcast_chat 并发使用）。
 struct Inner {
     host: String,
     port: u16,
@@ -254,8 +252,6 @@ struct Inner {
     pong_tx: watch::Sender<u64>,
 
     on_chat: StdMutex<Option<ChatCallback>>,
-    on_connected: StdMutex<Option<StateCallback>>,
-    on_disconnected: StdMutex<Option<StateCallback>>,
 }
 
 impl Inner {
@@ -313,22 +309,12 @@ impl ChatBridgeClient {
                 writer: TokioMutex::new(None),
                 pong_tx,
                 on_chat: StdMutex::new(None),
-                on_connected: StdMutex::new(None),
-                on_disconnected: StdMutex::new(None),
             }),
         }
     }
 
     pub fn set_on_chat(&self, callback: ChatCallback) {
         store_slot(&self.inner.on_chat, Some(callback));
-    }
-
-    pub fn set_on_connected(&self, callback: StateCallback) {
-        store_slot(&self.inner.on_connected, Some(callback));
-    }
-
-    pub fn set_on_disconnected(&self, callback: StateCallback) {
-        store_slot(&self.inner.on_disconnected, Some(callback));
     }
 
     /// 连接状态。
@@ -341,8 +327,8 @@ impl ChatBridgeClient {
         self.inner.running.store(value, Ordering::SeqCst);
     }
 
-    /// 生命周期主循环：连接+登录 → on_connected → keep-alive →
-    /// 收包循环 → on_disconnected → `RECONNECT_DELAY` 秒后重连；`stop()` 置位后
+    /// 生命周期主循环：连接+登录 → keep-alive →
+    /// 收包循环 → `RECONNECT_DELAY` 秒后重连；`stop()` 置位后
     /// 当前轮结束即退出，不再重连。
     pub async fn run(self: Arc<Self>) {
         self.set_running(true);
@@ -363,7 +349,7 @@ impl ChatBridgeClient {
             Ok(read) => self.run_session(read).await,
             Err(err) => {
                 tracing::error!("ChatBridge 连接异常: {}", err);
-                // 会话收尾：无论成败都关流并触发 on_disconnected
+                // 会话收尾：无论成败都关流（finalize）
                 self.finalize().await;
             }
         }
@@ -372,18 +358,6 @@ impl ChatBridgeClient {
     /// 仅置位标志；收包循环在下一个包边界退出，run() 不再重连。
     pub fn stop(&self) {
         self.set_running(false);
-    }
-
-    pub async fn send_chat(&self, target: &str, message: &str, author: &str) {
-        self.inner
-            .send_packet(&json!({
-                "sender": self.inner.name,
-                "receivers": [target],
-                "broadcast": false,
-                "type": PACKET_TYPE_CHAT,
-                "payload": {"author": author, "message": message},
-            }))
-            .await;
     }
 
     pub async fn broadcast_chat(&self, message: &str, author: &str) {
@@ -439,12 +413,11 @@ impl ChatBridgeClient {
         }
     }
 
-    /// 单次连接会话：置 connected → on_connected →
-    /// keep-alive → 收包循环 → 结束后 finalize（connected=false、关流、on_disconnected）。
+    /// 单次连接会话：置 connected →
+    /// keep-alive → 收包循环 → 结束后 finalize（connected=false、关流）。
     /// 测试可不经外层重连循环直接驱动本方法。
     async fn run_session(&self, read: OwnedReadHalf) {
         self.inner.connected.store(true, Ordering::SeqCst);
-        self.fire_state_callback(&self.inner.on_connected).await;
         tracing::info!("ChatBridge 已连接: {}:{}", self.inner.host, self.inner.port);
 
         let (dead_tx, dead_rx) = watch::channel(false);
@@ -456,22 +429,11 @@ impl ChatBridgeClient {
         self.finalize().await;
     }
 
-    /// 会话收尾（`finalize`）：connected=False，关流（错误吞掉），
-    /// 触发 on_disconnected。
+    /// 会话收尾（`finalize`）：connected=False，关流（错误吞掉）。
     async fn finalize(&self) {
         self.inner.connected.store(false, Ordering::SeqCst);
         if let Some(mut writer) = self.inner.writer.lock().await.take() {
             let _ = writer.shutdown().await; // writer.close()：失败吞掉
-        }
-        self.fire_state_callback(&self.inner.on_disconnected).await;
-    }
-
-    /// 触发状态回调（异常只记日志，不上抛）。
-    async fn fire_state_callback(&self, slot: &StdMutex<Option<StateCallback>>) {
-        if let Some(callback) = clone_slot(slot) {
-            if let Err(err) = AssertUnwindSafe(callback()).catch_unwind().await {
-                tracing::error!("ChatBridge 回调异常: {:?}", err);
-            }
         }
     }
 }
@@ -754,6 +716,15 @@ mod tests {
 
     // ---------- 回环集成 ----------
 
+    /// 轮询等待连接状态条件成立（替代旧的状态回调观察方式；3s 超时 panic）。
+    async fn wait_for(condition: impl Fn() -> bool) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        while !condition() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(condition(), "3s 内连接状态条件未满足");
+    }
+
     #[tokio::test]
     async fn loopback_login_chat_pong_and_broadcast() {
         let cryptor = AesCryptor::new("testkey");
@@ -817,29 +788,11 @@ mod tests {
                 let _ = tx.send((sender, author, message));
             })
         }));
-        let (conn_tx, mut conn_rx) = mpsc::unbounded_channel();
-        client.set_on_connected(Arc::new(move || {
-            let tx = conn_tx.clone();
-            Box::pin(async move {
-                let _ = tx.send(());
-            })
-        }));
-        let (disc_tx, mut disc_rx) = mpsc::unbounded_channel();
-        client.set_on_disconnected(Arc::new(move || {
-            let tx = disc_tx.clone();
-            Box::pin(async move {
-                let _ = tx.send(());
-            })
-        }));
 
         let runner = tokio::spawn(Arc::clone(&client).run());
 
-        // 登录完成：on_connected 触发且 is_connected 为真
-        tokio::time::timeout(Duration::from_secs(3), conn_rx.recv())
-            .await
-            .expect("3s 内应完成登录")
-            .expect("channel 不应关闭");
-        assert!(client.is_connected());
+        // 登录完成：is_connected 置真
+        wait_for(|| client.is_connected()).await;
 
         // on_chat 收到服务端下发的 chat（sender, author, message 逐项正确）
         let (sender, author, message) =
@@ -881,7 +834,7 @@ mod tests {
             .expect("客户端应在断开后退出")
             .expect("run 任务不应 panic");
         server.await.expect("服务端任务不应 panic");
-        assert!(disc_rx.try_recv().is_ok(), "on_disconnected 应已触发");
+        assert!(!client.is_connected(), "会话收尾应置 connected=false");
     }
 
     // ---------- 收包循环回归（镜像 tests/test_chatbridge_receive_loop.py） ----------
@@ -912,13 +865,6 @@ mod tests {
             "pw",
             "ThisIstheSecret",
         ));
-        let (disc_tx, mut disc_rx) = mpsc::unbounded_channel();
-        client.set_on_disconnected(Arc::new(move || {
-            let tx = disc_tx.clone();
-            Box::pin(async move {
-                let _ = tx.send(());
-            })
-        }));
 
         // 直接驱动单次会话（不走外层重连循环）。
         client.set_running(true);
@@ -927,16 +873,15 @@ mod tests {
             driver.run_once().await;
         });
 
-        tokio::time::timeout(Duration::from_secs(3), disc_rx.recv())
-            .await
-            .expect("对端关闭后收包循环必须立即退出（旧实现的死循环会在此超时）")
-            .expect("channel 不应关闭");
-
-        client.stop();
+        // 对端关闭后收包循环必须立即退出并收尾（run_once 返回且 connected=false）——
+        // 旧实现的死循环会在此超时。
         tokio::time::timeout(Duration::from_secs(3), session)
             .await
-            .expect("会话应已结束")
+            .expect("对端关闭后会话应立即结束（旧实现会死循环卡住）")
             .expect("会话任务不应 panic");
+        assert!(!client.is_connected(), "会话收尾应置 connected=false");
+
+        client.stop();
         server.await.expect("服务端任务不应 panic");
     }
 
@@ -987,13 +932,6 @@ mod tests {
                 let _ = tx.send((sender, author, message));
             })
         }));
-        let (disc_tx, mut disc_rx) = mpsc::unbounded_channel();
-        client.set_on_disconnected(Arc::new(move || {
-            let tx = disc_tx.clone();
-            Box::pin(async move {
-                let _ = tx.send(());
-            })
-        }));
 
         client.set_running(true);
         let driver = Arc::clone(&client);
@@ -1001,11 +939,14 @@ mod tests {
             driver.run_once().await;
         });
 
-        // 会话结束（循环在第 5 个连续错误后断开 → finalize → on_disconnected）
-        tokio::time::timeout(Duration::from_secs(3), disc_rx.recv())
+        // 会话结束：循环在第 5 个连续错误后断开 → finalize → run_once 返回
+        tokio::time::timeout(Duration::from_secs(3), session)
             .await
             .expect("收包循环应在 5 次连续错误后退出")
-            .expect("channel 不应关闭");
+            .expect("会话任务不应 panic");
+        assert!(!client.is_connected(), "会话收尾应置 connected=false");
+
+        client.stop();
 
         // 只有 msg1/msg2 被处理（证明成功会清零计数、5 个连续错误触发断开、之后的包不再处理）
         let mut messages = Vec::new();
@@ -1014,12 +955,7 @@ mod tests {
         }
         assert_eq!(messages, vec!["msg1".to_string(), "msg2".to_string()]);
 
-        client.stop();
         let _ = release_tx.send(());
-        tokio::time::timeout(Duration::from_secs(3), session)
-            .await
-            .expect("会话应已结束")
-            .expect("会话任务不应 panic");
         server.await.expect("服务端任务不应 panic");
     }
 
@@ -1030,7 +966,6 @@ mod tests {
         // 未连接时静默 return（无日志、无 panic、无 IO）
         let client = ChatBridgeClient::new("127.0.0.1", 1, "n", "p", "");
         assert!(!client.is_connected());
-        client.send_chat("mc", "hello", "tester").await;
         client.broadcast_chat("hello", "tester").await;
         assert!(!client.is_connected());
     }

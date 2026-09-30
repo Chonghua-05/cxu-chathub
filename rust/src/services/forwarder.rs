@@ -507,7 +507,6 @@ mod tests {
             nickname: "玩家A".to_string(),
             card: String::new(),
             segments,
-            raw: Value::Null,
         }
     }
 

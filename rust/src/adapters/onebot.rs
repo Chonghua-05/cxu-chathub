@@ -81,11 +81,6 @@ impl Segment {
     pub fn url(&self) -> String {
         py_str(self.data.get("url"))
     }
-
-    /// `str(data.get("summary") or "")`
-    pub fn summary(&self) -> String {
-        py_str(self.data.get("summary"))
-    }
 }
 
 /// 群消息事件。
@@ -97,7 +92,6 @@ pub struct GroupMessage {
     pub nickname: String,
     pub card: String,
     pub segments: Vec<Segment>,
-    pub raw: Value,
 }
 
 impl GroupMessage {
@@ -153,25 +147,6 @@ impl GroupMessage {
             .iter()
             .filter(|seg| seg.kind == "image")
             .cloned()
-            .collect()
-    }
-
-    /// at 段的 `data["qq"]`。仅当是整数或纯数字字符串时才算有效，
-    /// 即负数 / 浮点 / 非纯数字字符串都不算。
-    pub fn at_user_ids(&self) -> Vec<i64> {
-        self.segments
-            .iter()
-            .filter(|seg| seg.kind == "at")
-            .filter_map(|seg| match seg.data.get("qq") {
-                // str(-1).isdigit() == False → 负数同样排除
-                Some(Value::Number(n)) => n.as_i64().filter(|id| *id >= 0),
-                Some(Value::String(s))
-                    if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) =>
-                {
-                    s.parse().ok()
-                }
-                _ => None,
-            })
             .collect()
     }
 
@@ -279,7 +254,6 @@ pub fn parse_group_message(raw: &Value) -> Option<GroupMessage> {
         nickname: py_str(sender.and_then(|s| s.get("nickname"))),
         card: py_str(sender.and_then(|s| s.get("card"))),
         segments: parse_segments(raw.get("message").unwrap_or(&Value::Null)),
-        raw: raw.clone(),
     })
 }
 
@@ -1006,7 +980,6 @@ mod tests {
         let files: Vec<String> = msg.images().iter().map(Segment::file).collect();
         assert_eq!(files, ["abc.png"]);
         assert_eq!(msg.images()[0].url(), "https://multimedia.nt.qq.com.cn/x");
-        assert_eq!(msg.at_user_ids(), [10000]);
         assert_eq!(
             msg.describe(),
             "群=123456789 用户=玩家A(10001) 消息ID=1234567890"
@@ -1048,22 +1021,7 @@ mod tests {
         let msg = parse_group_message(&raw).unwrap();
         assert_eq!(msg.text(), "");
         assert!(msg.images().is_empty());
-        assert_eq!(msg.at_user_ids(), [10001]);
         assert!(msg.reply_message_id().is_none());
-    }
-
-    #[test]
-    fn at_user_ids_rejects_non_digits() {
-        let mut raw = raw_group_message();
-        raw["message"] = json!([
-            { "type": "at", "data": { "qq": -1 } },
-            { "type": "at", "data": { "qq": "abc" } },
-            { "type": "at", "data": { "qq": null } },
-            { "type": "at", "data": { "qq": 12.5 } },
-            { "type": "at", "data": { "qq": 20002 } },
-        ]);
-        let msg = parse_group_message(&raw).unwrap();
-        assert_eq!(msg.at_user_ids(), [20002]);
     }
 
     // ---------- feed / call ----------

@@ -36,7 +36,6 @@ impl BridgeService {
             text: msg.text(),
             group_id: msg.group_id,
             user_id: msg.user_id,
-            display_name: msg.display_name(),
             at_me: msg.at_qq(conn.self_id()),
         };
         let ctx = DispatchCtx {
@@ -55,7 +54,7 @@ impl BridgeService {
     /// 向配置的 QQ 群发文本（`!q` / 快照通知 / 玩家上下线推送用）。
     pub async fn send_to_qq_groups(&self, text: &str) -> bool {
         let Some(conn) = self.server.connection() else {
-            warn!("QQ 未连接，转发跳过: {}", super::truncate_inline(text, 40));
+            warn!("QQ 未连接，转发跳过: {}", crate::truncate_chars(text, 40));
             return false;
         };
         let mut sent = false;
@@ -63,7 +62,7 @@ impl BridgeService {
             match conn.send_group_text(group_id, text).await {
                 Ok(_) => {
                     sent = true;
-                    info!("转发到 QQ 群 {group_id}: {}", super::truncate_inline(text, 60));
+                    info!("转发到 QQ 群 {group_id}: {}", crate::truncate_chars(text, 60));
                 }
                 Err(err) => error!("转发到 QQ 群 {group_id} 失败: {err}"),
             }

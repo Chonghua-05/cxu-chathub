@@ -18,7 +18,6 @@ const SECTIONS = {
   chatroom: { title: 'Chatroom 对接 —— 服务端读写与白名单', fields: [
     { k: 'base_url', label: '服务端地址', type: 'text', size: 45 },
     { k: 'channel_id', label: '目标频道 ID', type: 'number', size: 15 },
-    { k: 'poll_interval', label: '读轮询间隔(秒)', type: 'number', size: 15 },
     { k: 'forward_token', label: 'forward_token', type: 'secret', size: 25 },
     { k: 'refresh_token', label: 'refresh_token', type: 'secret', size: 25 },
     { k: 'group_ids', label: 'QQ 群白名单', type: 'intlist', size: 30 },

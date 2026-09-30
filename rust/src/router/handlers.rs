@@ -159,9 +159,6 @@ mod tests {
                 .push((group_id, text.to_string()));
             true
         }
-        async fn qq_send_image(&self, _group_id: i64, _png: &[u8]) -> bool {
-            false
-        }
         async fn game_broadcast(&self, _text: &str) -> bool {
             false
         }
@@ -197,7 +194,6 @@ mod tests {
             text: text.into(),
             group_id: 0,
             user_id: 0,
-            display_name: author.into(),
             at_me: false,
         }
     }
@@ -210,7 +206,6 @@ mod tests {
             text: text.into(),
             group_id: 0,
             user_id: 0,
-            display_name: username.into(),
             at_me: false,
         }
     }
@@ -265,7 +260,6 @@ mod tests {
                 text: "!q x".into(),
                 group_id: 1,
                 user_id: 2,
-                display_name: "u".into(),
                 at_me: false,
             }
         )
@@ -315,7 +309,6 @@ mod tests {
             text: "/Server@Bot".into(),
             group_id: 1,
             user_id: 2,
-            display_name: "u".into(),
             at_me: false,
         };
         assert!(adapter.matches(&qq));

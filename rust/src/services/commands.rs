@@ -12,9 +12,6 @@ use serde_json::Value;
 
 use crate::services::{clean_player_name, py_get_str, python_str, truthy};
 
-/// 默认地址仅作示例，实际部署请通过 config.json 的 chatroom.* 覆盖
-pub const DEFAULT_STATUS_API: &str = "https://status.example.com/api/qqbot/status";
-
 /// 默认服务器地址示例（两条）。
 pub const DEFAULT_SERVER_ADDRESSES: [(&str, &str); 2] = [
     ("主IP", "game.example.com"),
@@ -619,7 +616,8 @@ mod tests {
             Vec::new(),
             false,
             format!("http://{addr}{VOICE_PATH}"),
-            DEFAULT_STATUS_API,
+            // 不会被请求的占位地址（本用例只测 /chatroom 的连接拒绝路径）
+            "https://status.example.invalid/api/qqbot/status",
             Vec::new(),
         )
         .unwrap();

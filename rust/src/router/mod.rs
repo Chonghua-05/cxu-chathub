@@ -31,19 +31,8 @@ pub struct InboundMessage {
     pub group_id: i64,
     /// QQ 用户号；其他来源为 0
     pub user_id: i64,
-    pub display_name: String,
     /// QQ 端：消息是否 @ 了机器人（智能路由的触发条件；其他来源恒 false）
     pub at_me: bool,
-}
-
-impl InboundMessage {
-    pub fn source_name(&self) -> &'static str {
-        match self.source {
-            Source::QQ => "qq",
-            Source::Game { .. } => "game",
-            Source::Chatroom { .. } => "chatroom",
-        }
-    }
 }
 
 /// 回复到消息来源端的出口。斜杠命令等「回源应答」走这里。
@@ -62,7 +51,6 @@ pub trait ReplySink: Send + Sync {
 pub trait Hub: Send + Sync {
     /// `group_id=None` 表示发到所有配置群。
     async fn qq_send_text(&self, group_id: Option<i64>, text: &str) -> bool;
-    async fn qq_send_image(&self, group_id: i64, png: &[u8]) -> bool;
     async fn game_broadcast(&self, text: &str) -> bool;
     /// 写入 chatroom 目标频道（Forward API）。
     async fn chatroom_post(
@@ -132,7 +120,7 @@ impl CommandRouter {
 }
 
 /// `!<prefix><payload>` 风格匹配助手：整个前缀大小写不敏感（
-/// `extract_qq_forward` 对齐，`!Q` 同样命中），返回去掉前缀并 trim 的载荷。
+/// `!Q` 同样命中），返回去掉前缀并 trim 的载荷。
 /// 多字节字符开头时安全退回 None（不做边界切割）。
 pub fn match_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     let trimmed = text.trim();

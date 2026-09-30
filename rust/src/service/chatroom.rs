@@ -44,7 +44,6 @@ impl BridgeService {
             text: content.clone(),
             group_id: 0,
             user_id: 0,
-            display_name: username.clone(),
             at_me: false,
         };
         let sink = ChatroomReplySink::new(&self.forward_api, &self.game_seq);

@@ -1,7 +1,7 @@
 //! 读方向：轮询 chatroom 频道消息，供 `!q` 与 chatroom→游戏使用。
 //!
 //! 行为约定：
-//! - [`extract_qq_forward`] 解析 `!q` 前缀消息；
+//! - `!q` 前缀消息由 [`crate::router::handlers::QqForwardRelay`] 按统一路由认领；
 //! - [`ChatroomReader`] 轮询频道消息并维护读游标（游标持久化在 state.json）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,29 +14,9 @@ use tracing::{info, warn};
 use crate::state::StateStore;
 
 pub const MESSAGES_ENDPOINT: &str = "/api/channels/{channel_id}/messages";
-pub const QQ_FORWARD_PREFIX: &str = "!q";
 
-/// `!q xxx` -> `xxx`；不是 !q 消息返回 None。
-///
-/// 整个前缀大小写不敏感（`!Q` 同样命中）；返回去掉前缀并 trim 的载荷；
-/// 裸 `!q`（空载荷）返回 None。
-pub fn extract_qq_forward(content: &str) -> Option<String> {
-    let stripped = content.trim();
-    // 因此对前两个字节做 ASCII 不敏感比较。
-    let prefix = QQ_FORWARD_PREFIX.as_bytes();
-    if stripped.len() < prefix.len()
-        || !stripped.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix)
-    {
-        return None;
-    }
-    // 前缀两个字节均为 ASCII，字节下标 2 一定是字符边界。
-    let payload = stripped[prefix.len()..].trim();
-    if payload.is_empty() {
-        None // 空载荷 → None
-    } else {
-        Some(payload.to_string())
-    }
-}
+/// 每次轮询拉取的消息条数（API 一般按新→旧返回）。
+const FETCH_LIMIT: usize = 10;
 
 /// 读方向的鉴权依赖抽象（测试用 Fake 实现即可注入；
 /// 收尾阶段会为 crate::adapters::chatroom_auth::ChatroomAuth 补一个桥接实现）。
@@ -58,9 +38,6 @@ pub struct ChatroomReader {
     cursor: Mutex<i64>,
     /// 首次 poll 是否已完成。
     initialized: AtomicBool,
-    fetch_limit: usize,
-    /// 启动时跳过历史积压；构造 API 未暴露，恒为 true。
-    skip_backlog: bool,
 }
 
 /// 缺失/非数值按 0 处理；
@@ -96,15 +73,7 @@ impl ChatroomReader {
             client,
             cursor: Mutex::new(seeded),
             initialized: AtomicBool::new(false),
-            fetch_limit: 10,
-            skip_backlog: true,
         })
-    }
-
-    /// 默认 10。
-    pub fn with_fetch_limit(mut self, limit: usize) -> Self {
-        self.fetch_limit = limit;
-        self
     }
 
     pub fn cursor(&self) -> i64 {
@@ -154,7 +123,7 @@ impl ChatroomReader {
                 "Authorization",
                 format!("Bearer {}", self.auth.access_token()),
             )
-            .query(&[("limit", self.fetch_limit)])
+            .query(&[("limit", FETCH_LIMIT)])
             .send()
             .await;
         let response = match response {
@@ -201,7 +170,7 @@ impl ChatroomReader {
             }
         };
 
-        if !self.initialized.swap(true, Ordering::SeqCst) && self.skip_backlog {
+        if !self.initialized.swap(true, Ordering::SeqCst) {
             let newest = messages.iter().map(message_id).max().unwrap_or(0);
             self.advance(newest);
             info!("读方向初始化完成，游标={}（历史消息不重放）", self.cursor());
@@ -366,27 +335,6 @@ mod tests {
 
     fn ids_of(messages: &[Value]) -> Vec<i64> {
         messages.iter().map(message_id).collect()
-    }
-
-    // ---------- extract_qq_forward ----------
-
-    #[test]
-    fn extract_qq_forward_matches_python_semantics() {
-        assert_eq!(extract_qq_forward("!q hello").as_deref(), Some("hello"));
-        assert_eq!(extract_qq_forward("!Q  x ").as_deref(), Some("x"));
-        assert_eq!(
-            extract_qq_forward("  !q   多余空格  ").as_deref(),
-            Some("多余空格")
-        );
-        // 裸 `!q`（含仅有空白）→ None
-        assert_eq!(extract_qq_forward("!q"), None);
-        assert_eq!(extract_qq_forward("  !q  "), None);
-        // 非前缀 → None
-        assert_eq!(extract_qq_forward("普通消息"), None);
-        assert_eq!(extract_qq_forward("qq 没有感叹号"), None);
-        assert_eq!(extract_qq_forward(""), None);
-        // 仅做前缀判断，`!qx` 的载荷是 "x"
-        assert_eq!(extract_qq_forward("!qx").as_deref(), Some("x"));
     }
 
     // ---------- 首轮跳过积压 ----------
@@ -577,16 +525,5 @@ mod tests {
         // 既非数组也非对象 → 空
         mock.push(json!("既不是数组也不是对象"));
         assert_eq!(reader.fetch_messages().await, Some(Vec::new()));
-    }
-
-    // ---------- fetch_limit 出现在查询串 ----------
-
-    #[tokio::test]
-    async fn fetch_limit_visible_in_query() {
-        let (base_url, mock) = spawn_mock().await;
-        mock.push(json!([]));
-        let reader = make_reader(&base_url, FakeAuth::new(), None).with_fetch_limit(3);
-        reader.fetch_messages().await;
-        assert_eq!(mock.last_query().as_deref(), Some("limit=3"));
     }
 }

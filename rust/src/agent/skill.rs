@@ -325,9 +325,6 @@ mod tests {
         async fn qq_send_text(&self, _group_id: Option<i64>, _text: &str) -> bool {
             true
         }
-        async fn qq_send_image(&self, _group_id: i64, _png: &[u8]) -> bool {
-            false
-        }
         async fn game_broadcast(&self, _text: &str) -> bool {
             false
         }
@@ -449,7 +446,6 @@ mod tests {
             text: text.into(),
             group_id: 1,
             user_id: 2,
-            display_name: "tester".into(),
             at_me: false,
         }
     }
@@ -490,7 +486,6 @@ mod tests {
             text: "!mc 活塞".into(),
             group_id: 0,
             user_id: 0,
-            display_name: "bob".into(),
             at_me: false,
         }));
         assert!(s.matches(&InboundMessage {
@@ -500,7 +495,6 @@ mod tests {
             text: "!mc 活塞".into(),
             group_id: 0,
             user_id: 0,
-            display_name: "alice".into(),
             at_me: false,
         }));
 

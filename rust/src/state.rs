@@ -12,6 +12,9 @@ use tracing::{error, warn};
 /// 已播报版本条目的保留上限（防 state.json 无限膨胀；远超实际更新频率）。
 const MAX_ANNOUNCED_PATCHES: usize = 50;
 
+/// 去重表保留上限：超出时 FIFO 淘汰最早的 `source_message_id`。
+const MAX_FORWARDED: usize = 2000;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StateSnapshot {
     pub forwarded_count: usize,
@@ -45,16 +48,11 @@ struct Inner {
 /// 重复提交会产生新消息。
 pub struct StateStore {
     path: PathBuf,
-    max_forwarded: usize,
     inner: Mutex<Inner>,
 }
 
 impl StateStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self::with_max_forwarded(path, 2000)
-    }
-
-    pub fn with_max_forwarded(path: impl Into<PathBuf>, max_forwarded: usize) -> Self {
         let path = path.into();
         let mut inner = Inner {
             forwarded: IndexMap::new(),
@@ -77,7 +75,6 @@ impl StateStore {
         }
         Self {
             path,
-            max_forwarded,
             inner: Mutex::new(inner),
         }
     }
@@ -143,7 +140,7 @@ impl StateStore {
                 guard
                     .forwarded
                     .insert(source_message_id.to_string(), chatroom_message_id);
-                while guard.forwarded.len() > self.max_forwarded {
+                while guard.forwarded.len() > MAX_FORWARDED {
                     guard.forwarded.shift_remove_index(0);
                 }
                 Self::snapshot_file(&guard)

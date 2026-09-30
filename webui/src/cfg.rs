@@ -35,8 +35,7 @@ pub const DEFAULT_TEMPLATE: &str = r#"{
     "player_quit_pattern": "",
     "voice_api": "https://chatroom.example.com/api/voice/qqbot/get_voice_channel_people",
     "status_api": "https://status.example.com/api/qqbot/status",
-    "server_addresses": [["主IP", "game.example.com"]],
-    "poll_interval": 10
+    "server_addresses": [["主IP", "game.example.com"]]
   },
   "chatbridge": { "enabled": true, "host": "", "port": 21027, "name": "web", "password": "", "aes_key": "" },
   "commands": { "group_allow_all": true, "allow_from": [], "status_image": true },
@@ -262,9 +261,6 @@ pub fn validate_config(cfg: &Value) -> Vec<String> {
         };
         if !gids_ok {
             e.push("chatroom.group_ids 必须是整数数组".to_string());
-        }
-        if !is_int_ge(c.get("poll_interval"), 1) {
-            e.push("chatroom.poll_interval 必须 >= 1".to_string());
         }
         for key in ["voice_api", "status_api"] {
             if !is_http_url(c.get(key)) {

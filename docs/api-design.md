@@ -36,7 +36,7 @@
 - `/api/status` 的 `capabilities` 字段来自 `router::CommandHandler::info()` 元数据——
   与未来 agent 智能路由共用同一份能力发现（见 `docs/agent-design.md`）。
 - `/api/relay` 走 `Hub` 出站抽象，与 `!q`/快照中继同一条路：新增目标端时 API 自动可用。
-- `/api/messages` 的数据源是 `service.rs` 的 `RecentLog`（三端入站消息在统一入口处记录）；
+- `/api/messages` 的数据源是 `service/mod.rs` 的 `RecentLog`（三端入站消息在统一入口处记录）；
   将来做消息持久化/全文检索时在此处替换或扩展。
 
 ## 未来 Web UI 的接入路径

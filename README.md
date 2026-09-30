@@ -102,10 +102,11 @@ Docker 部署与切流顺序见 [`docs/deployment.md`](docs/deployment.md)；
 | `adapters/forward_api.rs` | Forward Bot API 客户端（reqwest，HTTP 201 校验、上传黑名单与大小限制） |
 | `adapters/chatroom_auth.rs` | 用户 JWT 刷新与轮换持久化 |
 | `adapters/chatroom_read.rs` | 读方向轮询、读游标、`!q` 解析 |
-| `adapters/chatbridge.rs` | ChatBridge 客户端（4 字节长度前缀 + AES-CBC；与 Python 版逐字节对拍） |
+| `adapters/chatbridge.rs` | ChatBridge 客户端（4 字节长度前缀 + AES-CBC，与固定测试向量逐字节对拍） |
 | `services/forwarder.rs` | QQ 群 → chatroom 流水线（去重 / 图片压缩 / 引用回填） |
 | `services/player_events.rs` | 玩家上下线推送（ChatBridge 系统广播 + 可配置正则，事件驱动不丢条目） |
 | `services/commands.rs` / `status_render.rs` | `/chatroom` `/server` 命令与状态图（纯 Rust：cosmic-text 整形 → SVG → resvg 光栅化，失败自动回退文本） |
+| `services/patch_broadcast.rs` | Mojang 版本更新播报（轮询 feed → LLM 翻译 → 纯 Rust 长图 → 合并转发） |
 | `router/` | **统一消息路由**：三端入站汇入 `CommandRouter`，`/命令`、`!q`、`!snap` 均为注册其上的 `CommandHandler` |
 | `agent/` | **agent 能力（已实现）**：命令与文档源全部由 `agent.skills` 配置注册——`LocalDocSource`（本地目录，文件:行号出处）+ `MediaWikiSource`（云端 api.php）+ 通用 `DocQuerySkill`（LLM 整理、失败自动降级摘录）；设计见 [`docs/agent-design.md`](docs/agent-design.md) |
 | `api/` | **独立 HTTP API**（默认 `127.0.0.1:8199`）：状态/近期消息读接口 + token 保护的 `/api/relay` 写接口，带 CORS——Web UI 与其他站点调用的入口（见 [`docs/api-design.md`](docs/api-design.md)） |
@@ -162,7 +163,7 @@ cargo test                 # 单元 + WS 集成 + e2e 冒烟
 
 ## Web 控制台
 
-`webui/` 提供 Win95 风格的配置管理与状态监视控制台（Node.js 中间层 + 原生 JS 前端）：
+`webui/` 提供 Win95 风格的配置管理与状态监视控制台（Rust + axum 中间层 + 纯 HTML 前端）：
 读写 `config.json`（敏感字段脱敏、空值保留原值、写入后自动重启服务并轮询就绪）、
 代理状态 / 消息 / relay 接口（token 不下发浏览器）、SSE 实时状态。部署见
 [`webui/README.md`](webui/README.md)。

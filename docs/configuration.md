@@ -24,10 +24,9 @@
 | `forward_token` | str | `""` | **唯一必需的 token**，写方向 `/api/forward/*` 用 |
 | `refresh_token` | str | `""` | 用户 JWT 的 refresh token；轮换后自动写回 `state.json` |
 | `voice_api` | str | `https://chatroom.example.com/api/voice/qqbot/get_voice_channel_people` | `/chatroom` 查询语音频道在线人数用的接口 |
-| `status_api` | str | `https://status.example.com/api/qqbot/status` | `/server` 与玩家追踪用的状态接口 |
+| `status_api` | str | `https://status.example.com/api/qqbot/status` | `/server` 状态图的数据来源 |
 | `server_addresses` | [label, value][] | `[["主IP", "game.example.com"]]` | 状态图里展示的服务器地址列表 |
 | `group_ids` | int[] | `[]` | 允许同步的 QQ 群号列表（白名单） |
-| `poll_interval` | int | `10` | 读方向轮询间隔（秒） |
 | `qq_sync_enabled` | bool | `true` | QQ 群 → chatroom 总开关 |
 | `qq_forward_enabled` | bool | `true` | chatroom → QQ 群（`!q`）开关 |
 | `qq_to_game_enabled` | bool | `true` | `!q` 同时转发到游戏内 |

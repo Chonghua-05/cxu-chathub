@@ -37,7 +37,7 @@ NapCat ──WS message.group──▶ adapters/onebot.rs 解析成 GroupMessage
 ### B. chatroom → QQ 群 / 游戏
 
 ```
-adapters/chatroom_read.rs 每 poll_interval 秒 GET /api/channels/{id}/messages
+adapters/chatroom_read.rs 每 10 秒 GET /api/channels/{id}/messages
       ──▶ 与 state 中的读游标比对，取增量
       ──▶ 解析 !q <内容>：qq_forward_enabled → NapCat send_group_msg
                           qq_to_game_enabled  → chatbridge.send()

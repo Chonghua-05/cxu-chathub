@@ -74,28 +74,16 @@ git pull
 docker compose up -d --build
 ```
 
-## 6. 切换到 Rust 版（v0.2，已于 2026-09-13 完成）
+## 6. 版本与运行时
 
-Rust 版与 Python 版**配置与状态格式完全兼容**（`config.json` 原样可用、`state.json`
-的 forwarded / cursor / refresh_token 结构一致），NapCat 侧零改动：
+服务为 **Rust 单进程**（`rust/`，包 `chatroom-bridge`）；`config.json` / `state.json`
+格式与旧实现兼容，数据目录无需迁移，NapCat 侧零改动。
 
-```bash
-docker compose stop chatroom-bridge                    # 停 Python 版（释放 6199）
-docker compose --profile rust up -d --build chatroom-bridge-rust
-curl -s http://127.0.0.1:6199/healthz                  # 期望 status=ok + onebot_connected
-docker compose logs -f --tail 50 chatroom-bridge-rust
-```
-
-- `rust/Dockerfile` 为多阶段构建；仅装 Noto CJK 中文字体（无 Chromium，镜像约 80MB）。
-  Rust 进程自身常驻约 10MB 级。
-- `./data` 卷两边共用，切回 Python 版也无需迁移数据；切换期间去重表与读游标不丢。
-- Rust 版额外监听 **HTTP API `127.0.0.1:8199`**（配置段 `api`，默认开启在回环上；
-  Python 版无此端口）。容器内已监听，compose 未映射该端口——需要给 Web UI / 其他
-  站点用时再加 `127.0.0.1:8199:8199` 映射或走反代，并先配好 `api.access_token`。
-  见 [`docs/api-design.md`](api-design.md)。
-- **切流已完成**（2026-09-13）：Rust 版为线上唯一实现；Python 版服务定义保留在 compose 注释中，可回滚。
-curl -s http://127.0.0.1:6199/healthz
-```
+- `rust/Dockerfile` 为多阶段构建；运行镜像仅装 Noto CJK 中文字体（无 Chromium，镜像约 80MB）。
+  Rust 进程空载常驻约 8MB 级、渲染峰值约 105MB。
+- 额外监听 **HTTP API `127.0.0.1:8199`**（配置段 `api`，默认开启在回环上）。容器内已监听，
+  compose 未映射该端口——需要给 Web UI / 其他站点用时再加 `127.0.0.1:8199:8199` 映射或走反代，
+  并先配好 `api.access_token`。见 [`docs/api-design.md`](api-design.md)。
 
 ## 7. 故障速查
 

@@ -1,39 +1,4 @@
 services:
-  chatroom-bridge:
-    build:
-      context: .
-      args:
-        # /status 发图需要 Chromium；磁盘/内存不足时改成 "false"（渲染会自动回退文本）
-        STATUS_IMAGE: "true"
-    image: cxu-chathub:latest
-    container_name: chatroom-bridge
-    restart: unless-stopped
-    # 复用旧框架原来占用的 6199：NapCat 客户端本来就指向 127.0.0.1:6199/ws，
-    # 所以 NapCat 侧无需新增客户端，也不需要额外放行任何端口。
-    # 注意：6199 当前被旧框架容器占用，必须先停掉旧框架才能起本容器。
-    ports:
-      - "127.0.0.1:6199:6199"
-    volumes:
-      - ./config.json:/app/config.json:ro
-      - ./data:/data
-    # Chromium 渲染状态图需要的内存；容器自身常驻只有 ~40MB
-    mem_limit: 1200m
-    shm_size: 512m
-    environment:
-      - TZ=Asia/Shanghai
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ---------- Rust 版（与上面 Python 版二选一运行）----------
-  # 两者都映射宿主机 127.0.0.1:6199，同时起会端口冲突；且 6199 双占会让同一群消息
-  # 被两边各转一次。profiles 守卫保证普通 `docker compose up` 不会把它拉起来。
-  # 切换顺序：先停旧容器（docker compose stop chatroom-bridge）→
-  #   docker compose --profile rust up -d chatroom-bridge-rust
-  # 状态文件与 Python 版互相兼容（state.json 的 forwarded / cursor / refresh_token
-  # 结构一致），./data 目录两边共用，切换后去重表与读游标不丢。
   chatroom-bridge-rust:
     build:
       context: .
@@ -41,16 +6,14 @@ services:
     image: cxu-chathub:rust
     container_name: chatroom-bridge-rust
     restart: unless-stopped
-    # 守卫：只有显式带 --profile rust 时才启动本服务
-    profiles:
-      - "rust"
-    # 与 Python 版相同的端口语义：NapCat 客户端本就指向 127.0.0.1:6199/ws，切过来不用改 NapCat
+    # 复用 6199：NapCat 客户端本来就指向 127.0.0.1:6199/ws，不需要动 NapCat，
+    # 也不需要额外放行端口。注意：6199 若被旧框架容器占用，必须先停掉旧框架。
     ports:
       - "127.0.0.1:6199:6199"
     volumes:
       - ./config.json:/app/config.json:ro
       - ./data:/data
-    # 状态图渲染已改纯 Rust（无 Chromium），常驻内存大幅下降；先给 256M，稳定后再压
+    # 状态图与播报长图为纯 Rust 渲染（无 Chromium），常驻内存很小
     mem_limit: 256m
     environment:
       - TZ=Asia/Shanghai

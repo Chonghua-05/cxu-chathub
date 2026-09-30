@@ -27,15 +27,14 @@
 
 ## v0.2 —— Rust 重写（已完成，2026-09-13 切流上线）
 
-用 Rust 重写整套服务（`rust/`，包 `chatroom-bridge`），**行为对齐 Python 版**。
-**Rust 版已于 2026-09-13 在云主机切流上线为唯一线上实现**（镜像 `cxu-chathub:rust-v0.2`、
-容器 `chatroom-bridge`）；Python 版代码保留在 `src/`，仅供回滚参照。
+用 Rust 重写整套服务（`rust/`，包 `chatroom-bridge`）。**Rust 版已于 2026-09-13
+在云主机切流上线为唯一线上实现**（镜像 `cxu-chathub:rust-v0.2`、容器 `chatroom-bridge`）。
+原 Python 版已彻底移除（回滚参照走 git 历史 `f5dc1e9`）。
 
 - [x] 行为对齐：三端互通、群命令（`/chatroom` `/server`）、去重 / 游标 / refresh token
-      持久化逐一对齐 Python 版
-- [x] 部署件：`rust/Dockerfile` 多阶段构建 +
-      `docker-compose.yml` 的 `rust` profile（与 Python 版二选一，6199 端口冲突）
-- [x] 切流验收：`state.json` 与 Python 版互相兼容（`./data` 目录共用），切流后
+      持久化逐一对齐旧实现
+- [x] 部署件：`rust/Dockerfile` 多阶段构建 + `docker-compose.yml`（单 service，6199 回环）
+- [x] 切流验收：`state.json` 与旧实现互相兼容（`./data` 目录共用），切流后
       去重表与读游标不丢
 - [x] 架构预留：agent 能力扩展点固化（`router::CommandHandler` / `agent::DocumentSource`），
       设计见 [`docs/agent-design.md`](agent-design.md)，技能实现属 v0.3
@@ -142,7 +141,7 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
 
 ## 更远
 
-- [ ] Publish 到 PyPI，支持 `pip install` 后以库的形式嵌入其他服务
+- [ ] Publish 到 crates.io，支持以库的形式嵌入其他服务
 - [ ] 插件化：其他社区服务以子进程 / 插件方式挂到本仓库的运行时
 
 ## 非目标

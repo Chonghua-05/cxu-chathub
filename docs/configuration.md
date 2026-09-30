@@ -28,7 +28,6 @@
 | `server_addresses` | [label, value][] | `[["主IP", "game.example.com"]]` | 状态图里展示的服务器地址列表 |
 | `group_ids` | int[] | `[]` | 允许同步的 QQ 群号列表（白名单） |
 | `poll_interval` | int | `10` | 读方向轮询间隔（秒） |
-| `debounce_count` | int | `2` | （仅 Python 版）快照防抖次数；Rust 版已改事件驱动，忽略此字段 |
 | `qq_sync_enabled` | bool | `true` | QQ 群 → chatroom 总开关 |
 | `qq_forward_enabled` | bool | `true` | chatroom → QQ 群（`!q`）开关 |
 | `qq_to_game_enabled` | bool | `true` | `!q` 同时转发到游戏内 |

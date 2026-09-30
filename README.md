@@ -3,12 +3,12 @@
 > 本社区消息中枢：让 **QQ 群**、**chatroom 频道** 与 **MC 游戏内聊天** 三端互通，
 > 并为后续的社区服务与 Agent 能力提供常驻底座。
 
-前身是某个聊天机器人框架的 chatroom 追踪插件。现已独立为**无 AI 依赖**的单进程
-asyncio 服务，跑在云主机 Docker 上，与旧框架和 AI 服务完全解耦。
+前身是某个聊天机器人框架的 chatroom 追踪插件。现已独立为**无 AI 依赖**的 Rust 单进程
+服务（`rust/`，包 `chatroom-bridge`），跑在云主机 Docker 上，与旧框架和 AI 服务完全解耦。
 
 - 仓库名：`cxu-chathub`
-- Python 包名：`chatroom_bridge`，容器名 `chatroom-bridge`（暂未改名，避免打断线上部署）
-- 版本：`0.6.0`（Rust 重写；Python 版已下线）
+- 容器名 `chatroom-bridge`（沿用旧名，避免打断线上部署）
+- 版本：`0.6.0`（Rust 实现，唯一线上版本）
 
 ---
 
@@ -24,8 +24,8 @@ asyncio 服务，跑在云主机 Docker 上，与旧框架和 AI 服务完全解
 
 设计要点：
 
-- **零 AI 依赖**：Rust 单进程（tokio + axum；原 Python 版 aiohttp + pycryptodome 已下线），常驻内存约 40MB
-  （开启状态图渲染时容器上限 1.2G）。
+- **零 AI 依赖**：Rust 单进程（tokio + axum），空载常驻约 8MB、渲染峰值约 105MB，容器内存上限 256M。
+- **渲染无 Chromium**：`/server` 状态图与播报长图由纯 Rust 渲染（cosmic-text → SVG → resvg）。
 - **单进程、无状态外部依赖**：去重表与读游标落在 `state.json`（原子写、损坏自愈）。
 - **复用已有链路**：直接监听 `127.0.0.1:6199`，即 NapCat 中「NapCat 客户端」客户端原本指向的地址，
   切换时不需要动 NapCat 配置、不需要放行新端口。
@@ -42,11 +42,11 @@ asyncio 服务，跑在云主机 Docker 上，与旧框架和 AI 服务完全解
               │                      │ 127.0.0.1:6199/ws
               ▼                      ▼
         ┌───────────────────────────────────────────┐
-        │            cxu-chathub（本服务）            │
-        │  onebot.py ── bridge.py ── forward_api.py  │
-        │  chatroom_read.py ─ chatroom_auth.py       │
-        │  chatbridge.py ─ player_tracker.py         │
-        │  commands.py ─ status_render.py ─ state.py │
+        │        cxu-chathub（Rust 单进程）           │
+        │  adapters/onebot ─ forwarder ─ forward_api │
+        │  chatroom_read ─ chatroom_auth             │
+        │  chatbridge ─ player_events                │
+        │  commands ─ status_render ─ state          │
         └──────┬──────────────────────┬──────────────┘
                │ Forward Bot API       │ ChatBridge (AES/TCP 21027)
                ▼                       ▼
@@ -70,16 +70,17 @@ cp config.example.json config.json
 #    chatroom.forward_token        ← chatroom 官方给 bot 的静态 token（唯一必需）
 #    chatbridge.password / aes_key ← 服务端分配
 #    onebot.access_token           ← 与 NapCat 客户端的 token 一致
-#    commands.status_image         ← true 表示 /server 发图（构建时需带 Chromium）
+#    commands.status_image         ← true 表示 /server 发图（渲染已内置，无需额外依赖）
 #    chatroom.voice_api / status_api / server_addresses
 #                                  ← 你自己的服务地址（示例值必须覆盖）
 
-# 2) 本地开发 / 测试
-uv venv .venv && uv pip install --python .venv/bin/python aiohttp pillow pycryptodome pytest
-PYTHONPATH=src .venv/bin/python -m pytest -q tests
+# 2) 构建 / 测试
+cd rust
+cargo test
+cargo build --release
 
 # 3) 运行（容器内路径为 /app/config.json）
-PYTHONPATH=src .venv/bin/python -m chatroom_bridge.main --config ./config.json
+./target/release/chatroom-bridge --config ./config.json
 ```
 
 健康检查：`curl -s http://127.0.0.1:6199/healthz`
@@ -89,11 +90,11 @@ Docker 部署与切流顺序见 [`docs/deployment.md`](docs/deployment.md)；
 
 ---
 
-## Rust 版（`rust/`，当前开发重心）
+## 实现（`rust/`）
 
-v0.2 起本服务用 **Rust 重写**（省内存：常驻约 10MB 级 vs Python 的 40MB + Chromium），
-与 Python 版**行为逐一对齐**，`config.json` / `state.json` 格式完全兼容，切换时
-NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `docs/roadmap.md`）。
+本服务为 **Rust 单进程**（tokio + axum）。`config.json` / `state.json` 与旧实现
+格式兼容，数据目录零改动。`/server` 状态图与播报长图已从 Chromium 迁移为纯 Rust 渲染
+（cosmic-text → SVG → resvg），镜像不再需要 Chromium（见 `docs/roadmap.md` v0.6）。
 
 | 模块 | 作用 |
 |------|------|
@@ -125,25 +126,6 @@ Agent 能力（`!mc` / `!wiki` / `!tmc`，下一阶段）的扩展点设计见
 
 ---
 
-## 模块一览（Python 版，已下线，保留供回滚参照）
-
-| 文件 | 作用 |
-|------|------|
-| `onebot.py` | OneBot v11 反向 WS 服务端：token 校验、群事件解析、动作调用（`send_group_msg` 等）、`/healthz` |
-| `forward_api.py` | 官方 Forward Bot API 客户端（Bearer 静态 token，写方向） |
-| `chatroom_auth.py` | 用户 JWT：`/api/auth/refresh` 换 token，轮换后持久化，解析 exp / user_id |
-| `chatroom_read.py` | 读方向轮询 `/api/channels/{id}/messages`，维护读游标，解析 `!q` |
-| `chatbridge.py` | ChatBridge 客户端（4 字节长度前缀 + AES-CBC，与旧插件协议一致） |
-| `player_tracker.py` | 在线玩家快照比对 + 状态驱动防抖，产生上下线事件 |
-| `bridge.py` | QQ 群 → chatroom 流水线（文本 / 图片上传 / 引用 / 本地去重） |
-| `commands.py` | 命令解析与格式化（`/chatroom`、`/server`） |
-| `status_render.py` | `/server` 状态图的 HTML→PNG 渲染（Playwright/Chromium） |
-| `state.py` | 去重表、读游标、refresh_token 持久化（原子写，损坏自愈） |
-| `config.py` | 配置加载与校验（token 只从文件读，绝不写日志） |
-| `main.py` | 服务装配与生命周期（`--config`） |
-
----
-
 ## 已知约束
 
 - chatroom 服务端**不去重**：同一 `source_message_id` 重复提交会产生新消息，去重由本服务负责
@@ -161,11 +143,12 @@ Agent 能力（`!mc` / `!wiki` / `!tmc`，下一阶段）的扩展点设计见
 ## 测试
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest -q tests
+cd rust
+cargo test                 # 单元 + WS 集成 + e2e 冒烟
 ```
 
 覆盖：配置解析、状态持久化（含损坏恢复）、OneBot 事件解析、Forward API 请求形状与错误处理、
-转发去重、玩家事件防抖、读游标与 `!q` 解析、命令与状态图模板，以及一条真实 WS 的端到端装配烟测。
+转发去重、玩家事件防抖、读游标与 `!q` 解析、命令与状态图渲染，以及一条真实 WS 的端到端装配烟测。
 
 ---
 

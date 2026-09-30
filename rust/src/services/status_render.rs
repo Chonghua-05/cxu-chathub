@@ -8,7 +8,7 @@
 //! 视觉常量照抄旧 `status.html`（见 git 历史 bff03e2）的 CSS，目标是与
 //! Chromium 渲染“肉眼接近”。
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 use base64::Engine as _;
 use cosmic_text::fontdb;
@@ -22,6 +22,9 @@ use crate::services::{clean_player_name, py_get_str, truthy};
 
 /// 状态图背景（原图，不再重编码）
 const BACKGROUND_JPG: &[u8] = include_bytes!("templates/status-bg.jpg");
+/// 预裁好的「横向成品」背景条：宽=nominal 画布宽、高=nominal cover 高。
+/// 宽高固定时直接裁剪即可，免去运行时的 Lanczos 缩放（见 [`strip_canvas`]）。
+const BACKGROUND_STRIP_PNG: &[u8] = include_bytes!("templates/status-bg-strip.png");
 /// 状态图标（预渲染 PNG，绿色对勾 / 红色叉）
 const ICON_OK_PNG: &[u8] = include_bytes!("../../assets/icons/ok.png");
 const ICON_FAIL_PNG: &[u8] = include_bytes!("../../assets/icons/fail.png");
@@ -117,11 +120,143 @@ fn swash_cache() -> &'static Mutex<SwashCache> {
     SC.get_or_init(|| Mutex::new(SwashCache::new()))
 }
 
-/// 背景图解码结果（原图，仅解码一次）。
-fn background_image() -> Option<&'static image::RgbaImage> {
-    static BG: OnceLock<Option<image::RgbaImage>> = OnceLock::new();
-    BG.get_or_init(|| image::load_from_memory(BACKGROUND_JPG).ok().map(|i| i.to_rgba8()))
-        .as_ref()
+/// 背景图解码（原图；仅在做 cover 缩放时解码，不长期常驻）。
+fn decode_background() -> Option<image::DynamicImage> {
+    image::load_from_memory(BACKGROUND_JPG).ok()
+}
+
+/// 预裁背景条的快速路径：直接按高度居中裁剪，**不做缩放**。
+/// 仅当条宽/高都够用（sw>=iw 且 sh>=ih）时命中；否则返回 None 走通用 cover 路径。
+/// 与旧 cover 的居中裁剪一致（宽度方向条宽=画布宽时 ox=0）。
+fn strip_canvas(iw: u32, ih: u32) -> Option<image::RgbaImage> {
+    let img = image::load_from_memory(BACKGROUND_STRIP_PNG).ok()?;
+    let (sw, sh) = (img.width(), img.height());
+    if sw < iw || sh < ih {
+        return None;
+    }
+    let rgb = match img {
+        image::DynamicImage::ImageRgb8(buf) => buf,
+        other => other.to_rgb8(),
+    };
+    let ox = (sw - iw) / 2;
+    let oy = (sh - ih) / 2; // 与旧 cover 的纵向居中裁剪一致
+    if ox == 0 && oy == 0 && rgb.width() == iw && rgb.height() == ih {
+        return Some(image::DynamicImage::ImageRgb8(rgb).to_rgba8());
+    }
+    let crop = image::imageops::crop_imm(&rgb, ox, oy, iw, ih).to_image();
+    Some(image::DynamicImage::ImageRgb8(crop).to_rgba8())
+}
+
+/// 简单双线性缩放（u8→u8），**不产生** `image::imageops::resize` 那样的 f32 大中间缓冲
+/// （其缓冲 ≈ 目标宽 × 源高 × 通道 × 4，高图时可达数十 MB）。背景回退路径用；
+/// 该背景在面板内本就会被模糊，边缘的轻微缩放差异可接受。
+fn resize_bilinear(src: &image::RgbImage, dw: u32, dh: u32) -> image::RgbImage {
+    let (sw, sh) = (src.width().max(1), src.height().max(1));
+    let (dw, dh) = (dw.max(1), dh.max(1));
+    let mut out = image::RgbImage::new(dw, dh);
+    let xr = sw as f32 / dw as f32;
+    let yr = sh as f32 / dh as f32;
+    for y in 0..dh {
+        let sy = ((y as f32 + 0.5) * yr - 0.5).max(0.0);
+        let y0 = (sy.floor() as u32).min(sh - 1);
+        let y1 = (y0 + 1).min(sh - 1);
+        let fy = sy - y0 as f32;
+        for x in 0..dw {
+            let sx = ((x as f32 + 0.5) * xr - 0.5).max(0.0);
+            let x0 = (sx.floor() as u32).min(sw - 1);
+            let x1 = (x0 + 1).min(sw - 1);
+            let fx = sx - x0 as f32;
+            let p00 = src.get_pixel(x0, y0);
+            let p10 = src.get_pixel(x1, y0);
+            let p01 = src.get_pixel(x0, y1);
+            let p11 = src.get_pixel(x1, y1);
+            let mut px = [0u8; 3];
+            for c in 0..3 {
+                let top = p00[c] as f32 * (1.0 - fx) + p10[c] as f32 * fx;
+                let bot = p01[c] as f32 * (1.0 - fx) + p11[c] as f32 * fx;
+                px[c] = (top * (1.0 - fy) + bot * fy).round().clamp(0.0, 255.0) as u8;
+            }
+            out.put_pixel(x, y, image::Rgb(px));
+        }
+    }
+    out
+}
+
+/// 把背景按 cover 适配缩放到 (iw, ih)：解码 → 裁剪可见区域 → 缩放 → 转 RGBA。
+/// 全程在 RGB 空间缩放/裁剪，最后一步才转 RGBA，避免“全尺寸 RGBA”中间态。
+fn cover_canvas(iw: u32, ih: u32) -> Option<image::RgbaImage> {
+    // 快速路径：预裁背景条够用时直接裁剪（免 Lanczos 缩放，省 ~4×目标的 f32 缓冲）
+    if let Some(c) = strip_canvas(iw, ih) {
+        return Some(c);
+    }
+    let bg = decode_background()?;
+    let (bw, bh) = (bg.width(), bg.height());
+    let scale = (iw as f32 / bw as f32).max(ih as f32 / bh as f32);
+    let sw = (bw as f32 * scale).ceil() as u32;
+    let sh = (bh as f32 * scale).ceil() as u32;
+    let ox = (sw.saturating_sub(iw)) / 2;
+    let oy = (sh.saturating_sub(ih)) / 2;
+    let rgb = match bg {
+        image::DynamicImage::ImageRgb8(buf) => buf,
+        other => other.to_rgb8(),
+    };
+    // 先把源里「可见区域」裁出来，再缩放到目标尺寸：避免先生成 sw×sh 的大中间图
+    // （高图时 sw 也变得很大，image 的 resize 还要按其开 ~4× 的 f32 缓冲，实测可上百 MB）。
+    let sx = ((ox as f32 / scale).floor() as u32).min(bw.saturating_sub(1));
+    let sy = ((oy as f32 / scale).floor() as u32).min(bh.saturating_sub(1));
+    let ex = (((ox + iw) as f32 / scale).ceil() as u32).clamp(sx + 1, bw);
+    let ey = (((oy + ih) as f32 / scale).ceil() as u32).clamp(sy + 1, bh);
+    let region = image::imageops::crop_imm(&rgb, sx, sy, ex - sx, ey - sy).to_image();
+    let scaled = resize_bilinear(&region, iw.max(1), ih.max(1));
+    Some(image::DynamicImage::ImageRgb8(scaled).to_rgba8())
+}
+
+/// 全分辨率下的高斯 sigma（与原 `blur_region` 的 `sigma=20` 保持一致）。
+const BG_BLUR_SIGMA: f32 = 20.0;
+/// 预模糊画布缓存条数上限（实际画布尺寸基本固定，1 条即可命中）。
+const BG_CACHE_CAP: usize = 3;
+
+/// 整幅高斯模糊：降采样 1/4 → σ/4 高斯 → 放大回原尺寸（与旧逻辑同参，效果一致）。
+fn blur_canvas(sharp: &image::RgbaImage) -> image::RgbaImage {
+    const DOWN: u32 = 4;
+    let (iw, ih) = (sharp.width(), sharp.height());
+    let dw = (iw / DOWN).max(1);
+    let dh = (ih / DOWN).max(1);
+    let small = image::imageops::resize(sharp, dw, dh, image::imageops::FilterType::Triangle);
+    let bl = imageproc::filter::gaussian_blur_f32(&small, BG_BLUR_SIGMA / DOWN as f32);
+    image::imageops::resize(&bl, iw, ih, image::imageops::FilterType::Triangle)
+}
+
+fn blurred_cache() -> &'static Mutex<Vec<((u32, u32), std::sync::Arc<image::RgbaImage>)>> {
+    static C: OnceLock<Mutex<Vec<((u32, u32), std::sync::Arc<image::RgbaImage>)>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// 取指定画布尺寸的**预模糊**画布：命中缓存直接复用，未命中则用 `build` 现算并缓存。
+/// 只缓存模糊结果（省去每次渲染重算高斯）；清晰画布由调用方按需现算后再叠加。
+fn blurred_background(
+    iw: u32,
+    ih: u32,
+    build: impl FnOnce() -> image::RgbaImage,
+) -> std::sync::Arc<image::RgbaImage> {
+    let cache = blurred_cache();
+    {
+        let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(pos) = guard.iter().position(|(k, _)| *k == (iw, ih)) {
+            // 命中：提到末尾（最近使用）
+            let entry = guard.remove(pos);
+            let arc = entry.1.clone();
+            guard.push(entry);
+            return arc;
+        }
+    }
+    let blurred = std::sync::Arc::new(build());
+    let mut guard = cache.lock().unwrap_or_else(PoisonError::into_inner);
+    if guard.len() >= BG_CACHE_CAP {
+        guard.remove(0); // 淘汰最旧
+    }
+    guard.push(((iw, ih), blurred.clone()));
+    blurred
 }
 
 // ---------------------------- 文本整形 ----------------------------
@@ -550,12 +685,34 @@ pub fn render(data: &Value, addresses: Option<&[(String, String)]>) -> Result<Ve
     ));
 
     // 外层面板（半透明白 + 边框 + 阴影）
+    // 阴影用多层向外扩展的描边环近似原 feDropShadow(dy8/σ16/op0.37)：resvg 的 SVG
+    // filter 会另开一张全尺寸位图（实测 ~14MB 峰值）。描边环只落在面板外侧——与原
+    // filter 合成后一样，不压暗面板内部（实测内部差≈0）。
+    {
+        let layers: [(f32, f32, f32); 5] = [
+            // (外扩, 描边宽, 透明度)
+            (3.0, 8.0, 0.24),
+            (12.0, 10.0, 0.13),
+            (23.0, 12.0, 0.07),
+            (35.0, 12.0, 0.03),
+            (48.0, 12.0, 0.012),
+        ];
+        for (grow, stroke_w, alpha) in layers {
+            push_rect(
+                &mut svg,
+                panel_top - grow,
+                panel_top - grow + 8.0,
+                panel_w + grow * 2.0,
+                panel_h + grow * 2.0,
+                PANEL_RADIUS + grow,
+                BLACK,
+                0.0,
+                Some((BLACK, alpha, stroke_w)),
+            );
+        }
+    }
     svg.push_str(&format!(
-        "<defs><filter id=\"panelShadow\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\">\
-         <feDropShadow dx=\"0\" dy=\"8\" stdDeviation=\"16\" flood-color=\"#000\" flood-opacity=\"0.37\"/></filter></defs>"
-    ));
-    svg.push_str(&format!(
-        "<rect x=\"{panel_top:.1}\" y=\"{panel_top:.1}\" width=\"{panel_w:.1}\" height=\"{panel_h:.1}\" rx=\"{PANEL_RADIUS:.1}\" ry=\"{PANEL_RADIUS:.1}\" fill=\"#FFFFFF\" fill-opacity=\"0.6\" stroke=\"#FFFFFF\" stroke-opacity=\"0.3\" stroke-width=\"1\" filter=\"url(#panelShadow)\"/>"
+        "<rect x=\"{panel_top:.1}\" y=\"{panel_top:.1}\" width=\"{panel_w:.1}\" height=\"{panel_h:.1}\" rx=\"{PANEL_RADIUS:.1}\" ry=\"{PANEL_RADIUS:.1}\" fill=\"#FFFFFF\" fill-opacity=\"0.6\" stroke=\"#FFFFFF\" stroke-opacity=\"0.3\" stroke-width=\"1\"/>"
     ));
 
     // 标题 + 竖条
@@ -771,7 +928,8 @@ pub fn render(data: &Value, addresses: Option<&[(String, String)]>) -> Result<Ve
     rasterize(&svg, body_w, body_h, panel_top, panel_top, panel_w, panel_h)
 }
 
-/// 背景铺底 + 面板区域局部高斯模糊 + resvg 渲染前景。
+/// 背景铺底 + 面板区域套用预模糊结果 + resvg 渲染前景。
+/// 清晰背景每次现算；**模糊结果**按画布尺寸缓存（见 [`blurred_background`]）。
 fn rasterize(
     svg: &str,
     w: f32,
@@ -785,26 +943,12 @@ fn rasterize(
     let (iw, ih) = (w.round() as u32, h.round() as u32);
     let (iw, ih) = (iw.max(1), ih.max(1));
 
-    // 背景 cover 适配
-    let bg = background_image().ok_or_else(|| RenderError::Background("解码失败".into()))?;
-    let scale = (iw as f32 / bg.width() as f32).max(ih as f32 / bg.height() as f32);
-    let sw = (bg.width() as f32 * scale).ceil() as u32;
-    let sh = (bg.height() as f32 * scale).ceil() as u32;
-    let scaled = image::imageops::resize(bg, sw.max(1), sh.max(1), image::imageops::FilterType::Lanczos3);
-    let ox = (sw.saturating_sub(iw)) / 2;
-    let oy = (sh.saturating_sub(ih)) / 2;
-    let mut canvas = image::imageops::crop_imm(&scaled, ox, oy, iw, ih).to_image();
-
-    // 面板区域局部模糊（外扩 20px，clamp）
-    blur_region(
-        &mut canvas,
-        panel_x,
-        panel_y,
-        panel_w,
-        panel_h,
-        20.0,
-        20.0,
-    );
+    // 清晰画布每次现算（不常驻）；模糊结果按尺寸缓存复用
+    let mut canvas = cover_canvas(iw, ih)
+        .ok_or_else(|| RenderError::Background("解码失败".into()))?;
+    let blurred = blurred_background(iw, ih, || blur_canvas(&canvas));
+    // 面板矩形用预模糊结果覆盖（整幅已模糊，边缘无接缝，无需外扩）
+    paste_region(&mut canvas, &blurred, panel_x, panel_y, panel_w, panel_h);
 
     let mut pixmap = tiny_skia::Pixmap::from_vec(canvas.into_raw(), tiny_skia::IntSize::from_wh(iw, ih).ok_or_else(|| RenderError::Raster("尺寸非法".into()))?)
         .ok_or_else(|| RenderError::Raster("画布创建失败".into()))?;
@@ -818,48 +962,34 @@ fn rasterize(
         .map_err(|e| RenderError::Raster(e.to_string()))
 }
 
-/// 对画布中 [x,y,w,h] 矩形区域做高斯模糊（外扩 pad，clamp 到画布）。
-/// 为提速：区域降采样到 1/4 再模糊（sigma 同比缩小），完成后放大贴回；
-/// 只贴回“面板矩形”本身，面板外仍是原图。
+/// 把 `src` 中 [x,y,w,h] 矩形逐行拷贝到 `dst` 同位置（clamp 到画布）。
+/// 两张图尺寸相同；按行 `copy_from_slice` 走内存块，避免逐像素 get/put。
 #[allow(clippy::too_many_arguments)]
-fn blur_region(
-    img: &mut image::RgbaImage,
+fn paste_region(
+    dst: &mut image::RgbaImage,
+    src: &image::RgbaImage,
     x: f32,
     y: f32,
     w: f32,
     h: f32,
-    sigma: f32,
-    pad: f32,
 ) {
-    let (iw, ih) = (img.width() as i64, img.height() as i64);
-    let ex0 = ((x - pad).floor() as i64).clamp(0, iw);
-    let ey0 = ((y - pad).floor() as i64).clamp(0, ih);
-    let ex1 = ((x + w + pad).ceil() as i64).clamp(0, iw);
-    let ey1 = ((y + h + pad).ceil() as i64).clamp(0, ih);
-    let (ew, eh) = ((ex1 - ex0) as u32, (ey1 - ey0) as u32);
-    if ew < 2 || eh < 2 {
+    let (iw, ih) = (dst.width() as i64, dst.height() as i64);
+    let x0 = (x.floor() as i64).clamp(0, iw);
+    let y0 = (y.floor() as i64).clamp(0, ih);
+    let x1 = ((x + w).ceil() as i64).clamp(0, iw);
+    let y1 = ((y + h).ceil() as i64).clamp(0, ih);
+    if x1 <= x0 || y1 <= y0 {
         return;
     }
-    let crop = image::imageops::crop_imm(img, ex0 as u32, ey0 as u32, ew, eh).to_image();
-
-    // 1/4 降采样 → 模糊（sigma/4）→ 放大回原尺寸
-    const DOWN: u32 = 4;
-    let dw = (ew / DOWN).max(1);
-    let dh = (eh / DOWN).max(1);
-    let small = image::imageops::resize(&crop, dw, dh, image::imageops::FilterType::Triangle);
-    let blurred = imageproc::filter::gaussian_blur_f32(&small, sigma / DOWN as f32);
-    let up = image::imageops::resize(&blurred, ew, eh, image::imageops::FilterType::Triangle);
-
-    // 只把“面板矩形”（不含外扩）写回原图
-    let px0 = (x.floor() as i64).clamp(ex0, ex1) - ex0;
-    let py0 = (y.floor() as i64).clamp(ey0, ey1) - ey0;
-    let px1 = ((x + w).ceil() as i64).clamp(ex0, ex1) - ex0;
-    let py1 = ((y + h).ceil() as i64).clamp(ey0, ey1) - ey0;
-    for yy in py0..py1 {
-        for xx in px0..px1 {
-            let p = up.get_pixel(xx as u32, yy as u32);
-            img.put_pixel((ex0 + xx) as u32, (ey0 + yy) as u32, *p);
-        }
+    let row_bytes = ((x1 - x0) as usize) * 4;
+    let stride = (iw as usize) * 4;
+    let src_raw = src.as_raw();
+    let dst_raw = dst.as_mut();
+    for yy in y0..y1 {
+        let row = (yy as usize) * stride;
+        let col = (x0 as usize) * 4;
+        let s = row + col;
+        dst_raw[s..s + row_bytes].copy_from_slice(&src_raw[s..s + row_bytes]);
     }
 }
 

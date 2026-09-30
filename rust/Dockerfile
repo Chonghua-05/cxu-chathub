@@ -33,10 +33,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# 状态图渲染中文用 Noto Sans CJK；纯 Rust 渲染器通过 fontdb 读取系统字体
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        fonts-noto-cjk \
-    && rm -rf /var/lib/apt/lists/*
+# 状态图渲染中文用 Noto Sans CJK SC 的「子集」：只含状态图会出现的字形（~100KB）。
+# 不放完整 fonts-noto-cjk —— 那 4 个 ttc（~93MB）会被 fontdb 全部载入、常驻数十 MB。
+# 子集由 tools/make_font_subset.py 生成，源文件在 rust/assets/fonts/。
+COPY rust/assets/fonts/ /usr/share/fonts/opentype/noto-subset/
 
 ENV RUST_LOG=info \
     TZ=Asia/Shanghai

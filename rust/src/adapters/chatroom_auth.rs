@@ -11,13 +11,14 @@
 //!   仍失败则恢复现场）。
 
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use serde_json::{json, Value};
 use tracing::{error, info, warn};
 
 use crate::state::StateStore;
+use crate::truncate_chars;
 
 pub const REFRESH_ENDPOINT: &str = "/api/auth/refresh";
 
@@ -30,11 +31,6 @@ fn unix_now() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
-}
-
-/// 按字符数截断。
-fn truncate_chars(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
 }
 
 /// 缺失/null/空串/0 → ""；数值按字符串转换；
@@ -131,9 +127,7 @@ impl ChatroomAuth {
         refresh_token: impl Into<String>,
         store: Option<Arc<StateStore>>,
     ) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()?;
+        let client = crate::http_client(15, None).build()?;
         let config_refresh_token = refresh_token.into();
         let persisted = store.as_ref().map(|s| s.refresh_token()).unwrap_or_default();
         let effective = if persisted.is_empty() {

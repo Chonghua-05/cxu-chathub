@@ -84,9 +84,7 @@ impl RepoSource {
         extensions: Vec<String>,        // 空 = 内置默认集（.md/.markdown/.mdx/.txt）
         cache_root: impl Into<PathBuf>,
     ) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .timeout(DOWNLOAD_TIMEOUT)
-            .connect_timeout(Duration::from_secs(10))
+        let client = crate::http_client(DOWNLOAD_TIMEOUT.as_secs(), Some(10))
             // 自报身份；部分 CDN/网关对空 UA 拒绝
             .user_agent(concat!("cxu-chathub/", env!("CARGO_PKG_VERSION"), " (community doc bot)"))
             .build()?;

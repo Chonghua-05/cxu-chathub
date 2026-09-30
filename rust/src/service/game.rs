@@ -3,16 +3,15 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use tracing::warn;
 
 use crate::adapters::chatbridge::ChatBridgeClient;
-use crate::adapters::forward_api::{ForwardApi, PostMessage, PostSource};
+use crate::adapters::forward_api::{ForwardApi, PostSource};
 use crate::router::{DispatchCtx, InboundMessage, ReplySink, Source};
 
-use super::BridgeService;
+use super::{post_with_seq, BridgeService};
 
 impl BridgeService {
     // --- 游戏 → chatroom ---
@@ -95,18 +94,8 @@ async fn post_game_message(
     if !api.configured() {
         return false;
     }
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let seq_no = seq.fetch_add(1, Ordering::Relaxed) + 1;
-    let mut message = PostMessage::new(PostSource::Game);
-    message.content = content.to_string();
-    message.source_message_id = format!("{prefix}-{millis}-{seq_no}");
-    message.sender_username = username.to_string();
-    message.nickname = nickname.to_string();
-    match api.post_message(&message).await {
-        Ok(_) => true,
+    match post_with_seq(api, seq, prefix, PostSource::Game, content, username, nickname).await {
+        Ok(()) => true,
         Err(err) => {
             warn!("游戏侧消息转发失败: {err}");
             false

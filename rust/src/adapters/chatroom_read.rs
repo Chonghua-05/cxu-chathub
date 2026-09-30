@@ -6,7 +6,6 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -87,10 +86,7 @@ impl ChatroomReader {
         auth: Arc<dyn AuthTokenProvider>,
         store: Option<Arc<StateStore>>,
     ) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .connect_timeout(Duration::from_secs(5))
-            .build()?;
+        let client = crate::http_client(15, Some(5)).build()?;
         let seeded = store.as_ref().map(|s| s.last_read_message_id()).unwrap_or(0);
         Ok(Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),

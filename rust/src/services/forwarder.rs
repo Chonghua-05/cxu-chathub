@@ -16,7 +16,6 @@
 use std::io::Cursor;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use image::codecs::jpeg::JpegEncoder;
@@ -27,6 +26,7 @@ use serde_json::Value;
 use crate::adapters::forward_api::{ForwardApi, PostMessage, PostSource};
 use crate::adapters::onebot::GroupMessage;
 use crate::state::StateStore;
+use crate::truncate_chars;
 
 /// 单张图片上限：10MB（超过直接跳过该图，文本仍转发）。
 pub const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024;
@@ -123,11 +123,7 @@ impl ChatroomForwarder {
         enabled: bool,
         self_id: i64,
     ) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(5))
-            .build()
-            .unwrap_or_default();
+        let client = crate::http_client(30, Some(5)).build().unwrap_or_default();
         Self {
             api,
             state,
@@ -335,11 +331,6 @@ impl ChatroomForwarder {
 /// 数字判定（非空且全是 0-9）。
 fn is_digits(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
-}
-
-/// 按字符数截断（避免把多字节字符切成乱码）。
-fn truncate_chars(text: &str, max: usize) -> String {
-    text.chars().take(max).collect()
 }
 
 /// 按最长边 1920 + JPEG q75 压缩，失败时返回 None（原图上传）。

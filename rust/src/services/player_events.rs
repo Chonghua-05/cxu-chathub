@@ -67,34 +67,31 @@ impl PlayerEventDetector {
     /// 从系统广播文本识别事件。玩家名 = 正则的第一个捕获组；
     /// 先查上线再查下线，两个正则都未配置或都不命中 → `None`。
     pub fn detect(&self, server: &str, message: &str) -> Option<PlayerEvent> {
-        if let Some(regex) = &self.join {
-            if let Some(player) = regex
-                .captures(message)
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_string())
-            {
-                return Some(PlayerEvent {
-                    event_type: EventType::Online,
-                    server: server.to_string(),
-                    player,
-                });
-            }
+        if let Some(player) = first_capture(&self.join, message) {
+            return Some(PlayerEvent {
+                event_type: EventType::Online,
+                server: server.to_string(),
+                player,
+            });
         }
-        if let Some(regex) = &self.quit {
-            if let Some(player) = regex
-                .captures(message)
-                .and_then(|caps| caps.get(1))
-                .map(|m| m.as_str().to_string())
-            {
-                return Some(PlayerEvent {
-                    event_type: EventType::Offline,
-                    server: server.to_string(),
-                    player,
-                });
-            }
+        if let Some(player) = first_capture(&self.quit, message) {
+            return Some(PlayerEvent {
+                event_type: EventType::Offline,
+                server: server.to_string(),
+                player,
+            });
         }
         None
     }
+}
+
+/// 取正则的第一个捕获组；正则未配置或不命中 → `None`。
+fn first_capture(regex: &Option<Regex>, message: &str) -> Option<String> {
+    regex
+        .as_ref()?
+        .captures(message)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
 }
 
 #[cfg(test)]

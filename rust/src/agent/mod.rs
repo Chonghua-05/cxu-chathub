@@ -1,19 +1,20 @@
-//! Agent 能力预留层 —— **本阶段不实现任何技能**，只固化扩展接口。
+//! Agent 能力：**配置注册式**检索问答——命令与文档源全部由 `agent.skills` 声明，
+//! 新增命令零代码。LLM 整理失败自动降级为纯检索摘录。
 //!
-//! 下一阶段在此登记查询技能（每个命令一个 [`crate::router::CommandHandler`]
-//! + 一个 [`DocumentSource`]）：
+//! 每个命令 = 一个 [`crate::router::CommandHandler`]（[`DocQuerySkill`]）
+//! + 一个或多个 [`DocumentSource`]：
 //!
 //! | 命令 | 数据源 | 形态 |
 //! |------|--------|------|
-//! | `!mc` | MC 源码查询 | 本地源码副本检索，回答带文件/行级出处 |
-//! | `!wiki` | Minecraft Wiki | 云端 MediaWiki API |
-//! | `!tmc` | techmc wiki | 文档源（本地/云端） |
-//! | （规划中） | MC 源码释读文档 | 本地文档，帮助理解架构与逻辑设计 |
+//! | `!mc` | MC 源码 | 本地源码副本检索，回答带文件/行级出处 |
+//! | `!aimc` | 源码释读文档 | 本地文档 |
+//! | `!tmc` | GTMC 文章库 | 云端仓库（tarball 缓存） |
+//! | `!doc` | RMS-Docs | 云端仓库 |
+//! | `!docs` | MinecraftDocs | 云端仓库（英文语料，`exclude` 路径排除） |
+//! | `!wiki` | Minecraft Wiki | MediaWiki API |
 //!
-//! 智能路由预留：[`crate::router::CommandRouter`] 目前按注册顺序做显式命令匹配；
-//! 未来在其前置一个 LLM 路由器（读取各 handler 的 [`crate::router::CommandInfo`]
-//! 元数据做工具选择），handler 与检索层接口无需改动。
-//! 完整设计见 `docs/agent-design.md`。
+//! [`crate::agent::routing`]（灰度）把不带命令前缀、且 @ 了机器人的自然语言消息
+//! 路由到技能；完整设计见 `docs/agent-design.md`。
 
 use std::sync::Arc;
 

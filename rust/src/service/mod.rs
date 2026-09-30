@@ -33,6 +33,7 @@ use crate::adapters::onebot::{GroupMessageHandler, OneBotServer};
 use crate::agent::llm::LlmClient;
 use crate::api::ApiServer;
 use crate::config::{describe, AppConfig};
+use crate::error::ForwardApiError;
 use crate::router::handlers::{QqForwardRelay, SlashCommandAdapter, SnapshotRelay};
 use crate::router::{CommandHandler, CommandInfo, CommandRouter, Hub};
 use crate::services::commands::CommandService;
@@ -126,7 +127,32 @@ impl RecentLog {
 
 /// 单行截断（不加省略号）；供近期消息缓冲与日志预览用。
 pub(crate) fn truncate_inline(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
+    crate::truncate_chars(s, max)
+}
+
+/// 三端落库共用：合成 `source_message_id`（前缀 + 毫秒时间戳 + 自增序号）后写向
+/// chatroom。失败只记日志不重试（服务端不去重，重试会造成重复写入）——调用方各自
+/// 保留 `configured()` 前置检查与错误文案。
+pub(crate) async fn post_with_seq(
+    api: &ForwardApi,
+    seq: &AtomicU64,
+    prefix: &str,
+    source: PostSource,
+    content: &str,
+    sender_username: &str,
+    nickname: &str,
+) -> Result<(), ForwardApiError> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let seq_no = seq.fetch_add(1, Ordering::Relaxed) + 1;
+    let mut message = PostMessage::new(source);
+    message.content = content.to_string();
+    message.source_message_id = format!("{prefix}-{millis}-{seq_no}");
+    message.sender_username = sender_username.to_string();
+    message.nickname = nickname.to_string();
+    api.post_message(&message).await.map(|_| ())
 }
 
 pub struct BridgeService {
@@ -221,7 +247,7 @@ impl BridgeService {
             None
         };
 
-        let mut router = CommandRouter::new();
+        let mut router = CommandRouter::default();
         router.register(Arc::new(SlashCommandAdapter {
             commands: commands.clone(),
         }));
@@ -1001,22 +1027,23 @@ impl Hub for BridgeService {
         if !self.forward_api.configured() {
             return false;
         }
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let seq_no = self.game_seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let mut message = PostMessage::new(if source == "qq" {
+        let source = if source == "qq" {
             PostSource::QQ
         } else {
             PostSource::Game
-        });
-        message.content = content.to_string();
-        message.source_message_id = format!("hub-{millis}-{seq_no}");
-        message.sender_username = sender_username.to_string();
-        message.nickname = nickname.to_string();
-        match self.forward_api.post_message(&message).await {
-            Ok(_) => true,
+        };
+        match post_with_seq(
+            &self.forward_api,
+            &self.game_seq,
+            "hub-",
+            source,
+            content,
+            sender_username,
+            nickname,
+        )
+        .await
+        {
+            Ok(()) => true,
             Err(err) => {
                 warn!("chatroom 写入失败: {err}");
                 false

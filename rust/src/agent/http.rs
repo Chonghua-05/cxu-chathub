@@ -11,13 +11,13 @@
 //! 「查不到就说查不到，不编」（roadmap 非目标约束）。
 
 use std::collections::HashMap;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use tracing::warn;
 
 use super::{DocHit, DocumentSource};
+use crate::truncate_chars;
 
 /// snippet 最长字符数（按 Unicode 字符计，不按字节）。
 /// 取整页开头而非 400 字摘要——LLM 拿到的上下文越完整，回答越靠谱。
@@ -73,9 +73,7 @@ impl MediaWikiSource {
             .strip_suffix("/api.php")
             .unwrap_or(&api_url)
             .to_string();
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .connect_timeout(Duration::from_secs(5))
+        let client = crate::http_client(15, Some(5))
             // MediaWiki API 规范要求自报身份；Cloudflare 会对空 UA 直接 403
             .user_agent(concat!("cxu-chathub/", env!("CARGO_PKG_VERSION"), " (community doc bot)"))
             .build()?;
@@ -305,11 +303,6 @@ impl MediaWikiSource {
             snippet: truncate_chars(extract, SNIPPET_MAX_CHARS),
         }
     }
-}
-
-/// 截前 `max` 个 Unicode 字符（不按字节，避免切开多字节字符 panic）。
-fn truncate_chars(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
 }
 
 /// 剥掉词尾的虚词单字（是/的/了/吗/呢/吧/啊）——「活塞是」→「活塞」。

@@ -111,12 +111,6 @@ pub struct CommandRouter {
 }
 
 impl CommandRouter {
-    pub fn new() -> Self {
-        Self {
-            handlers: Vec::new(),
-        }
-    }
-
     /// 注册顺序即优先级；前缀互为前缀关系的命令（如 `!tmc` 与 `!mc`）先长者。
     pub fn register(&mut self, handler: Arc<dyn CommandHandler>) {
         self.handlers.push(handler);

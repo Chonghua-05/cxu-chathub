@@ -109,8 +109,7 @@ impl PatchBroadcaster {
         sink: Arc<dyn PatchSendSink>,
         bot_uin: i64,
     ) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(60))
+        let client = crate::http_client(60, None)
             .user_agent(concat!(
                 "cxu-chathub/",
                 env!("CARGO_PKG_VERSION"),

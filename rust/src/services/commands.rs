@@ -7,7 +7,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
 
 use serde_json::Value;
 
@@ -201,10 +200,7 @@ impl CommandService {
     ) -> Result<Self, reqwest::Error> {
         // 命令查询超时：总 20s、连接 5s、读 15s
         // reqwest 对应：总超时 20s + 连接超时 5s
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(20))
-            .connect_timeout(Duration::from_secs(5))
-            .build()?;
+        let client = crate::http_client(20, Some(5)).build()?;
         Ok(Self {
             client,
             allow_all,

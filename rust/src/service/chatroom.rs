@@ -1,9 +1,8 @@
 //! chatroom 同步子路径：读方向轮询拉到的消息进入统一路由（!q 中继），
 //! 原始消息照常广播到游戏；回源应答经 Forward API 以 bot 身份写回频道。
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -11,10 +10,10 @@ use tracing::warn;
 
 use crate::adapters::chatroom_auth::ChatroomAuth;
 use crate::adapters::chatroom_read::AuthTokenProvider;
-use crate::adapters::forward_api::{ForwardApi, PostMessage, PostSource};
+use crate::adapters::forward_api::{ForwardApi, PostSource};
 use crate::router::{DispatchCtx, InboundMessage, ReplySink, Source};
 
-use super::BridgeService;
+use super::{post_with_seq, BridgeService};
 
 impl BridgeService {
     pub(super) async fn dispatch_chatroom_message(&self, message: Value) {
@@ -94,17 +93,10 @@ impl ReplySink for ChatroomReplySink {
             warn!("chatroom 回源应答跳过：Forward API 未配置");
             return false;
         }
-        let millis = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let seq_no = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        let mut message = PostMessage::new(PostSource::Game);
-        message.content = text.to_string();
-        message.source_message_id = format!("agent-reply-{millis}-{seq_no}");
-        // sender_username 留空：服务端以 bot 账号发布，归属由服务端映射决定
-        match self.api.post_message(&message).await {
-            Ok(_) => true,
+        // sender_username/nickname 留空：服务端以 bot 账号发布，归属由服务端映射决定
+        match post_with_seq(&self.api, &self.seq, "agent-reply-", PostSource::Game, text, "", "").await
+        {
+            Ok(()) => true,
             Err(err) => {
                 warn!("chatroom 回源应答写入失败: {err}");
                 false

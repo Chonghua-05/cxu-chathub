@@ -18,8 +18,6 @@
 //! 装配日志里直接可见，不用等第一次调用才失败。调用失败由上层（`agent::skill`）
 //! 捕获并降级为检索摘录——LLM 故障不应导致技能不可用。
 
-use std::time::Duration;
-
 use serde::Deserialize;
 
 use crate::config::LlmConfig;
@@ -114,8 +112,7 @@ impl LlmClient {
         if !lower.starts_with("http://") && !lower.starts_with("https://") {
             return Err(format!("api_url 必须以 http(s):// 开头: {}", cfg.api_url));
         }
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(cfg.timeout_secs.max(1)))
+        let client = crate::http_client(cfg.timeout_secs.max(1), None)
             .build()
             .map_err(|err| format!("HTTP 客户端构建失败: {err}"))?;
         let endpoint = normalize_endpoint(&cfg.api_url);

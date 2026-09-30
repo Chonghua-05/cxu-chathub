@@ -16,11 +16,10 @@
 //! - 非法 `content_type` 不再原样透传：reqwest 要求 MIME 可解析，
 //!   解析失败会在发起 HTTP 前快速报错（`guess_content_type` 的结果恒合法，正常调用不受影响）。
 
-use std::time::Duration;
-
 use serde_json::{json, Value};
 
 use crate::error::ForwardApiError;
+use crate::truncate_chars;
 
 /// 附件上限：10MB。
 pub const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
@@ -79,11 +78,6 @@ pub fn guess_content_type(filename: &str) -> &'static str {
         .iter()
         .find(|(known, _)| *known == ext)
         .map_or(DEFAULT_CONTENT_TYPE, |(_, mime)| *mime)
-}
-
-/// 按字符数截断（避免把多字节字符切成乱码）。
-fn truncate_chars(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
 }
 
 /// 消息来源（编译期枚举收窄）。
@@ -150,10 +144,7 @@ impl ForwardApi {
         token: impl Into<String>,
         channel_id: i64,
     ) -> Result<Self, reqwest::Error> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .connect_timeout(Duration::from_secs(5))
-            .build()?;
+        let client = crate::http_client(30, Some(5)).build()?;
         Ok(Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),
             token: token.into(),

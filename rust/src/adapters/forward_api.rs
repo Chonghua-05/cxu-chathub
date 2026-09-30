@@ -4,16 +4,16 @@
 //!   POST /api/forward/channels/{id}/upload   -> 200 `{id, filename, content_type, size, url}`
 //!   POST /api/forward/channels/{id}/messages -> 201 完整消息对象
 //!
-//! 对齐 Python 版 `chatroom_bridge/forward_api.py`：
-//! - [`is_blocked`] / [`guess_content_type`] 与 Python 的黑名单 / MIME 表逐项一致；
+//! 行为约定：
+//! - [`is_blocked`] / [`guess_content_type`] 的黑名单 / MIME 表；
 //! - [`ForwardApi`] 校验顺序、端点路径、multipart 字段名、状态码期望与错误文案一致；
 //!   token 只放在请求头，不写日志，也不进入任何错误信息。
 //!
 //! 服务端不去重：同一 source_message_id 重复提交会产生新消息，去重由调用方负责。
 //!
-//! 与 Python 的两处类型层差异（语义等价）：
-//! - Python 的 `source in ("qq", "game")` 运行时校验由 [`PostSource`] 枚举在编译期收窄；
-//! - Python 原样透传非法 `content_type`，这里 reqwest 要求 MIME 可解析，
+//! 两处类型层差异（语义等价）：
+//! - 来源取值在编译期由 [`PostSource`] 枚举收窄；
+//! - 非法 `content_type` 不再原样透传：reqwest 要求 MIME 可解析，
 //!   解析失败会在发起 HTTP 前快速报错（`guess_content_type` 的结果恒合法，正常调用不受影响）。
 
 use std::time::Duration;
@@ -25,13 +25,13 @@ use crate::error::ForwardApiError;
 /// 附件上限：10MB。
 pub const MAX_FILE_SIZE: usize = 10 * 1024 * 1024;
 
-/// 被禁止上传的可执行扩展名（与 Python `BLOCKED_EXTENSIONS` 一字不差；比较时小写化）。
+/// 被禁止上传的可执行扩展名。
 const BLOCKED_EXTENSIONS: &[&str] = &[
     ".exe", ".bat", ".cmd", ".com", ".cpl", ".dll", ".scr", ".msi", ".jar", //
     ".sh", ".bash", ".ps1", ".vbs", ".js", ".wsf", ".apk", ".app", ".deb", ".rpm",
 ];
 
-/// 已知扩展名 -> Content-Type（与 Python `_MIME_BY_EXT` 一字不差）。
+/// 已知扩展名 -> Content-Type。
 const MIME_BY_EXT: &[(&str, &str)] = &[
     (".png", "image/png"),
     (".jpg", "image/jpeg"),
@@ -60,7 +60,7 @@ fn split_ext(filename: &str) -> &str {
     let Some(dot) = basename.rfind('.') else {
         return "";
     };
-    // Python 通用 splitext：basename 起始到最后一个点之间全是点 → 视为无扩展名
+    // 通用 splitext：basename 起始到最后一个点之间全是点 → 视为无扩展名
     if basename[..dot].chars().all(|c| c == '.') {
         return "";
     }
@@ -81,12 +81,12 @@ pub fn guess_content_type(filename: &str) -> &'static str {
         .map_or(DEFAULT_CONTENT_TYPE, |(_, mime)| *mime)
 }
 
-/// 按字符数截断（对齐 Python `body[:n]`，避免把多字节字符切成乱码）。
+/// 按字符数截断（避免把多字节字符切成乱码）。
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
-/// 消息来源。Python 里是 `"qq" | "game"` 字符串，这里用枚举在编译期收窄。
+/// 消息来源（编译期枚举收窄）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostSource {
     QQ,
@@ -102,7 +102,7 @@ impl PostSource {
     }
 }
 
-/// 待转发消息（对应 Python `post_message` 的关键字参数）。
+/// 待转发消息。
 #[derive(Debug, Clone)]
 pub struct PostMessage {
     pub source: PostSource,
@@ -144,8 +144,7 @@ pub struct ForwardApi {
 }
 
 impl ForwardApi {
-    /// Client timeout total 30s / connect 5s（对齐 Python
-    /// `aiohttp.ClientTimeout(total=30, sock_connect=5)`）。
+    /// Client timeout total 30s / connect 5s。
     pub fn new(
         base_url: impl Into<String>,
         token: impl Into<String>,
@@ -156,7 +155,6 @@ impl ForwardApi {
             .connect_timeout(Duration::from_secs(5))
             .build()?;
         Ok(Self {
-            // Python: base_url.rstrip("/")
             base_url: base_url.into().trim_end_matches('/').to_string(),
             token: token.into(),
             channel_id,
@@ -187,7 +185,7 @@ impl ForwardApi {
         filename: &str,
         content_type: Option<&str>,
     ) -> Result<i64, ForwardApiError> {
-        // 与 Python 相同的快速失败顺序：配置 → 非空 → 大小 → 扩展名。
+        // 快速失败顺序：配置 → 非空 → 大小 → 扩展名。
         if !self.configured() {
             return Err(ForwardApiError::new("forward token / channel_id 未配置", None, ""));
         }
@@ -202,7 +200,7 @@ impl ForwardApi {
             ));
         }
         if is_blocked(filename) {
-            // Python 这里展示的是未小写化的原始扩展名
+            // 展示未小写化的原始扩展名
             return Err(ForwardApiError::new(
                 format!("被禁止的扩展名: {}", split_ext(filename)),
                 None,
@@ -210,7 +208,6 @@ impl ForwardApi {
             ));
         }
 
-        // Python: content_type or guess_content_type(filename)（空串同样回落）
         let content_type = content_type
             .filter(|ct| !ct.is_empty())
             .unwrap_or_else(|| guess_content_type(filename));
@@ -248,7 +245,6 @@ impl ForwardApi {
                 truncate_chars(&body, 300),
             ));
         }
-        // Python: resp.json(content_type=None) —— 不校验 Content-Type
         let payload: Value = serde_json::from_str(&body).map_err(|_| {
             ForwardApiError::new(
                 format!("上传响应不是 JSON: {}", truncate_chars(&body, 200)),
@@ -281,7 +277,7 @@ impl ForwardApi {
             return Err(ForwardApiError::new("forward token / channel_id 未配置", None, ""));
         }
 
-        // sender 只带出现的键；Python `if sender_qq:` 的 0 是 falsy → 不写入
+        // sender 只带出现的键；qq 为 0 视为假值 → 不写入
         let mut sender = serde_json::Map::new();
         if let Some(qq) = message.sender_qq.filter(|qq| *qq != 0) {
             sender.insert("qq".to_string(), json!(qq));
@@ -334,7 +330,6 @@ impl ForwardApi {
                 truncate_chars(&body, 300),
             ));
         }
-        // Python: resp.json(content_type=None) —— 不校验 Content-Type
         serde_json::from_str(&body).map_err(|_| {
             ForwardApiError::new(
                 format!("转发响应不是 JSON: {}", truncate_chars(&body, 200)),
@@ -507,7 +502,7 @@ mod tests {
         mock.push_json(201, json!({"id": 1}));
         let api = make_api(&base);
 
-        // Python `if sender_qq:`：0 是 falsy → 不写入 sender；无回复 → 无 reply 对象
+        // 0 是 falsy → 不写入 sender；无回复 → 无 reply 对象
         let mut message = PostMessage::new(PostSource::QQ);
         message.content = "x".to_string();
         message.sender_qq = Some(0);
@@ -643,7 +638,7 @@ mod tests {
         mock.push_json(200, json!({"id": 1}));
         let api = make_api(&base);
         assert_eq!(api.upload(b"hello".to_vec(), "n.txt", None).await.unwrap(), 1);
-        // 空串 content_type 与 None 一样回落（Python: content_type or guess）
+        // 空串 content_type 与 None 一样回落（content_type or guess）
         mock.push_json(200, json!({"id": 2}));
         assert_eq!(
             api.upload(b"hi".to_vec(), "weird.unknownext", Some(""))
@@ -677,7 +672,7 @@ mod tests {
         let err = api.upload(b"MZ".to_vec(), "evil.exe", None).await.unwrap_err();
         assert_eq!(err.message, "被禁止的扩展名: .exe");
         assert_eq!(mock.count(), 0);
-        // 大写扩展名同样拦截（错误信息保留原始大小写，与 Python 一致）
+        // 大写扩展名同样拦截
         let err = api.upload(b"MZ".to_vec(), "EVIL.EXE", None).await.unwrap_err();
         assert_eq!(err.message, "被禁止的扩展名: .EXE");
         assert_eq!(mock.count(), 0);
@@ -720,7 +715,7 @@ mod tests {
         let api = make_api(&base);
         let err = api.upload(b"x".to_vec(), "a.png", None).await.unwrap_err();
         assert!(err.message.contains("上传响应缺少 id"));
-        // 字符串 id 不算 int（Python isinstance(id, int)）
+        // 字符串 id 不算 int
         mock.push_json(200, json!({"id": "42"}));
         let err = api.upload(b"x".to_vec(), "a.png", None).await.unwrap_err();
         assert!(err.message.contains("上传响应缺少 id"));

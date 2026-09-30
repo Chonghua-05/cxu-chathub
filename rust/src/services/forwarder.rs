@@ -1,16 +1,16 @@
-//! QQ 群 -> chatroom 转发流水线（对应 Python `chatroom_bridge/bridge.py`）。
+//! QQ 群 -> chatroom 转发流水线。
 //!
 //! 把 OneBot 群消息转成官方 Forward Bot API 的请求：
 //! - 文本直接转发；图片先下载（超过 2MB 先压缩）再上传拿 attachment id
 //! - 引用消息带上 reply 信息（优先用本地近期消息缓存填充被引用内容）
 //! - 以 QQ message_id 作为 source_message_id，并做本地去重
 //!
-//! 与 Python 的结构差异（语义等价）：
-//! - Python 通过 `conn.get_image(ref)` 把非 http 图片引用换成真实 URL；这里
+//! 结构说明（与旧实现语义等价）：
+//! - 非 http 图片引用经 OneBot 换成真实 URL；这里
 //!   抽象成 [`ImageResolver`] trait，main 装配时用
 //!   [`crate::adapters::onebot::OneBotConnection`] 适配（get_image(file) →
 //!   info["url"]，失败 → None），测试可注入假实现；
-//! - 图片压缩用 `image` crate 对应 Pillow 的 thumbnail（等比缩到 1920 框内、
+//! - 图片压缩（等比缩到 1920 框内、
 //!   从不放大）+ JPEG q75；压缩失败回退上传原图（文件名不变）。
 
 use std::io::Cursor;
@@ -32,7 +32,7 @@ use crate::state::StateStore;
 pub const MAX_UPLOAD_SIZE: usize = 10 * 1024 * 1024;
 /// 超过 2MB 的图片先压缩再上传。
 pub const IMAGE_COMPRESS_THRESHOLD: usize = 2 * 1024 * 1024;
-/// 压缩时最长边（Pillow thumbnail：等比缩到框内，从不放大）。
+/// 压缩时最长边（等比缩到框内，从不放大）。
 pub const IMAGE_MAX_DIMENSION: u32 = 1920;
 /// JPEG 压缩质量。
 pub const IMAGE_QUALITY: u8 = 75;
@@ -56,7 +56,7 @@ pub struct ForwardPlan {
 }
 
 impl ForwardPlan {
-    /// Python `plan.empty`：无文本且无图片。
+    /// 无文本且无图片。
     pub fn is_empty(&self) -> bool {
         self.content.is_empty() && self.image_refs.is_empty()
     }
@@ -66,7 +66,6 @@ impl ForwardPlan {
 pub fn build_forward_plan(msg: &GroupMessage) -> ForwardPlan {
     ForwardPlan {
         content: msg.text(),
-        // Python: seg.url or seg.file（两者皆空则跳过该段）
         image_refs: msg
             .images()
             .iter()
@@ -84,7 +83,7 @@ pub fn build_forward_plan(msg: &GroupMessage) -> ForwardPlan {
     }
 }
 
-/// 转发计数（对齐 Python `stats` 字典）。
+/// 转发计数。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ForwarderStats {
     pub forwarded: u64,
@@ -98,8 +97,7 @@ pub struct ChatroomForwarder {
     state: Arc<StateStore>,
     enabled: bool,
     self_id: i64,
-    /// 下载图片用的自建 client（对齐 Python start() 的
-    /// `aiohttp.ClientTimeout(total=30, sock_connect=5)`）。
+    /// 下载图片用的自建 client（总超时 30s、连接超时 5s）。
     client: reqwest::Client,
     /// message_id -> (display_name, 摘要)；插入序即访问序，FIFO 淘汰。
     recent: Mutex<IndexMap<i64, (String, String)>>,
@@ -151,12 +149,12 @@ impl ChatroomForwarder {
         }
     }
 
-    /// 返回 true 表示这条消息已被转发。门序对齐 Python handle()。
+    /// 返回 true 表示这条消息已被转发。
     pub async fn handle(&self, images: &dyn ImageResolver, msg: &GroupMessage) -> bool {
         if !self.enabled {
             return false;
         }
-        // 自己发的消息不回灌（Python: if self._self_id and msg.user_id == self._self_id）
+        // 自己发的消息不回灌（if self._self_id and msg.user_id == self._self_id）
         if self.self_id != 0 && msg.user_id == self.self_id {
             return false;
         }
@@ -187,7 +185,6 @@ impl ChatroomForwarder {
         let mut reply_nickname = String::new();
         let mut reply_content = String::new();
         if let Some(reply_to) = plan.reply_to.as_deref() {
-            // Python: int(plan.reply_to) 仅当纯数字；不在缓存则留空
             let cached = is_digits(reply_to)
                 .then(|| reply_to.parse::<i64>().ok())
                 .flatten()
@@ -215,7 +212,6 @@ impl ChatroomForwarder {
                 false
             }
             Ok(response) => {
-                // Python: isinstance(response.get("id"), int) 才写去重表
                 if let Some(chatroom_id) = response.get("id").and_then(Value::as_i64) {
                     self.state.mark_forwarded(&key, chatroom_id);
                 }
@@ -243,7 +239,7 @@ impl ChatroomForwarder {
     }
 
     /// 把消息摘要放进近期缓存：text 或（有图时）"[图片]"，截到 200 字符，
-    /// FIFO 上限 [`RECENT_CACHE_SIZE`]（对齐 Python `_remember`）。
+    /// FIFO 上限 [`RECENT_CACHE_SIZE`]。
     fn remember(&self, msg: &GroupMessage) {
         let text = msg.text();
         let summary = if !text.is_empty() {
@@ -280,7 +276,7 @@ impl ChatroomForwarder {
     }
 
     /// 取图片字节。ref 直接是 http(s) 时就用它，否则经 [`ImageResolver`]
-    /// 换取地址；超过 2MB 先压缩（对齐 Python `_fetch_image`）。
+    /// 换取地址；超过 2MB 先压缩。
     async fn fetch_image(
         &self,
         images: &dyn ImageResolver,
@@ -336,12 +332,12 @@ impl ChatroomForwarder {
     }
 }
 
-/// Python `str.isdigit()` 的 ASCII 近似（非空且全是 0-9）。
+/// 数字判定（非空且全是 0-9）。
 fn is_digits(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// 按字符数截断（对齐 Python `s[:n]`，避免把多字节字符切成乱码）。
+/// 按字符数截断（避免把多字节字符切成乱码）。
 fn truncate_chars(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
@@ -349,7 +345,7 @@ fn truncate_chars(text: &str, max: usize) -> String {
 /// 按最长边 1920 + JPEG q75 压缩，失败时返回 None（原图上传）。
 fn compress_image(data: &[u8]) -> Option<(Vec<u8>, String, String)> {
     let decoded = image::load_from_memory(data).ok()?;
-    // Pillow thumbnail：等比缩到框内，从不放大
+    // 等比缩到框内，从不放大
     let thumbnail = decoded.thumbnail(IMAGE_MAX_DIMENSION, IMAGE_MAX_DIMENSION);
     let rgb = thumbnail.to_rgb8();
     let mut output = Vec::new();

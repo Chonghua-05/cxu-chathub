@@ -1,7 +1,7 @@
 //! QQ 群命令：/chatroom、/server（/status 为兼容别名）。
 //!
 //! 命令都不需要 AI，纯 HTTP 查询 + 格式化后回群。
-//! 对应 Python 版 `chatroom_bridge/commands.py` 的逐行翻译：
+//! 行为约定：
 //! 查询失败（HTTP 非 200 / 网络 / 超时）时格式化函数收到 `Value::Null`，
 //! 产出「无法获取…」文案；未授权一律静默不响应。
 
@@ -16,7 +16,7 @@ use crate::services::{clean_player_name, py_get_str, python_str, truthy};
 /// 默认地址仅作示例，实际部署请通过 config.json 的 chatroom.* 覆盖
 pub const DEFAULT_STATUS_API: &str = "https://status.example.com/api/qqbot/status";
 
-/// Python `DEFAULT_SERVER_ADDRESSES: list[tuple[str, str]]`（两条）——照抄
+/// 默认服务器地址示例（两条）。
 pub const DEFAULT_SERVER_ADDRESSES: [(&str, &str); 2] = [
     ("主IP", "game.example.com"),
     ("备用地址", "backup.example.com:25565"),
@@ -37,7 +37,7 @@ impl CommandResult {
 
 /// 识别命令，返回 (命令名, 参数)；不是命令则返回 None。
 ///
-/// 与 Python 对齐：strip → 按第一个空格 partition → head 必须以 "/" 开头 →
+/// 解析约定：strip → 按第一个空格 partition → head 必须以 "/" 开头 →
 /// name = head[1:].split("@", 1)[0].lower()（容忍 /cmd@bot 形式）→ (name, rest.trim())。
 pub fn parse_command(text: &str) -> Option<(String, String)> {
     let text = text.trim();
@@ -54,7 +54,7 @@ pub fn parse_command(text: &str) -> Option<(String, String)> {
     // 容忍 /cmd@bot 形式
     let name = head[1..].split('@').next().unwrap_or("").to_lowercase();
     if name.is_empty() {
-        // Python 对 "/" 返回 ("", "")，但 handle() 随即因名字不在命令集而丢弃；
+        // 对 "/" 返回空名，但 handle() 随即因名字不在命令集而丢弃；
         // 这里直接视为非命令（对 handle 的可观测行为完全等价）。
         return None;
     }
@@ -189,7 +189,7 @@ pub struct CommandService {
 }
 
 impl CommandService {
-    /// `server_addresses` 为空时回退默认地址列表（对应 Python 的
+    /// `server_addresses` 为空时回退默认地址列表（
     /// `if server_addresses else list(DEFAULT_SERVER_ADDRESSES)`）。
     pub fn new(
         allow_all: bool,
@@ -199,7 +199,7 @@ impl CommandService {
         status_api: impl Into<String>,
         server_addresses: Vec<(String, String)>,
     ) -> Result<Self, reqwest::Error> {
-        // Python COMMAND_TIMEOUT: total=20, sock_connect=5, sock_read=15
+        // 命令查询超时：总 20s、连接 5s、读 15s
         // reqwest 对应：总超时 20s + 连接超时 5s
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
@@ -241,7 +241,7 @@ impl CommandService {
 
     /// 返回命令响应；None 表示不响应。
     ///
-    /// None：非命令 / 名字不在 (chatroom, server, status) / 未授权——**静默**，与 Python 一致。
+    /// None：非命令 / 名字不在 (chatroom, server, status) / 未授权——**静默**。
     /// /status 归一化为 "server"（stats 计在 "server" 下）。
     /// /chatroom → GET voice_api → format_voice_channels；/server → GET status_api；
     /// status_image=true 时先尝试渲染 PNG（失败自动回退文本）。
@@ -286,7 +286,7 @@ impl CommandService {
     }
 
     /// 非 200 → 警告日志 + Null；reqwest 客户端/网络错误 → Null；
-    /// 成功 → 解析 JSON（不校验 content-type，对应 Python `resp.json(content_type=None)`）。
+    /// 成功 → 解析 JSON。
     /// 格式化函数拿到 Null 后产出「无法获取…」文案。
     async fn get_json(&self, url: &str) -> Value {
         let response = match self.client.get(url).send().await {
@@ -302,7 +302,7 @@ impl CommandService {
         }
         match response.json::<Value>().await {
             Ok(data) => data,
-            // Python 这里 JSONDecodeError 会向外抛；Rust 侧同样回退 Null（同为「无法获取…」文案）
+            // JSON 解析失败 → 回退 Null（产出「无法获取…」文案）
             Err(err) => {
                 tracing::warn!("命令响应解析失败 {}: {}", url, err);
                 Value::Null
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn parse_command_slash_only_is_not_a_command() {
-        // Python 对 "/" 返回 ("", "")，handle() 因名字不在命令集而丢弃；
+        // 对 "/" 返回空名，handle() 因名字不在命令集而丢弃；
         // Rust 侧直接视为非命令，handle("/") 的可观测行为一致（None，不计数）。
         assert_eq!(parse_command("/"), None);
         assert_eq!(parse_command("  /  "), None);
@@ -487,7 +487,7 @@ mod tests {
 
     #[test]
     fn format_status_canned() {
-        // 注意：Python 在整个 servers 循环结束后才追加一个空行，服务器之间没有空行
+        // 注意：空行在整个 servers 循环结束后才追加，服务器之间没有空行
         assert_eq!(
             format_status(&status_data()),
             "服务器状态\n\n\
@@ -595,7 +595,7 @@ mod tests {
         assert_eq!(result.text, "无法获取语音频道信息。");
         let result = service.handle("/server", 1).await.unwrap();
         assert_eq!(result.text, "无法获取服务器状态。");
-        // Python 在查询前就计数，失败同样计入
+        // 查询前就计数，失败同样计入
         assert_eq!(service.stats().get("chatroom"), Some(&1));
         assert_eq!(service.stats().get("server"), Some(&1));
     }
@@ -623,7 +623,7 @@ mod tests {
 
     #[tokio::test]
     async fn json_parsed_regardless_of_content_type() {
-        // 对应 Python resp.json(content_type=None)：不校验 content-type
+        // 不校验 content-type，直接按 JSON 解析
         let (base, mock) = spawn_mock(voice_data()).await;
         *mock.text_plain.lock().unwrap() = true;
         let service = make_service(&base, true, Vec::new(), false);
@@ -634,7 +634,7 @@ mod tests {
 
     #[tokio::test]
     async fn status_image_falls_back_to_text_when_render_unavailable() {
-        // 数据不是对象时渲染必返回 None（对应 Python _render_status 的 isinstance 检查），
+        // 数据不是对象时渲染必返回 None，
         // 因此渲染不可用（非法数据 / 字体缺失 / SVG 失败）时确定性地走文本回退。
         let (base, _mock) = spawn_mock(json!([1, 2, 3])).await;
         let service = make_service(&base, true, Vec::new(), true);

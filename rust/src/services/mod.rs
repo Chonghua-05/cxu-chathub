@@ -11,12 +11,12 @@ pub mod patch_broadcast;
 pub mod player_events;
 pub mod status_render;
 
-// --- Python 语义小工具（commands 与 status_render 共用，避免两处各抄一份） ---
+// --- 通用语义小工具（commands 与 status_render 共用，避免两处各抄一份） ---
 
 use serde_json::Value;
 
-/// Python 风格标量转字符串（str(v) / f-string 插值）：None → "None"、
-/// True/False 保留 Python 大写、字符串原样、数字与 serde 表示一致。
+/// 标量转字符串：None → "None"、
+/// true/false 保留大写、字符串原样、数字与 serde 表示一致。
 pub(crate) fn python_str(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
@@ -40,7 +40,7 @@ pub(crate) fn py_get_str(obj: &Value, key: &str, default: &str) -> String {
     }
 }
 
-/// Python truthiness（bool(v)）。
+/// 假值判定（bool(v)）。
 pub(crate) fn truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => false,
@@ -52,7 +52,7 @@ pub(crate) fn truthy(value: Option<&Value>) -> bool {
     }
 }
 
-/// Python `str(p).lstrip("• ").strip()`：去掉行首的 • 与空格，再整段 trim。
+/// 去掉行首的 • 与空格，再整段 trim。
 pub(crate) fn clean_player_name(player: &Value) -> String {
     python_str(player)
         .trim_start_matches(['•', ' '])

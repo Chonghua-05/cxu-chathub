@@ -4,21 +4,21 @@
 //! - TCP 传输，4 字节长度前缀 + AES-CBC 加密 JSON
 //! - 登录握手 → keep-alive → ChatPayload 收发
 //!
-//! # 线格式保真备注（与 Python 原实现 `src/chatroom_bridge/chatbridge.py` 逐行核对）
+//! # 线格式保真备注
 //!
-//! - **长度前缀**：Python 发送 `self._writer.write(struct.pack("I", len(encrypted)) + encrypted)`，
+//! - **长度前缀**：4 字节长度前缀 + 加密载荷；长度按本机原生字节序编码，
 //!   接收 `remaining = struct.unpack("I", header)[0]`。`"I"` 不带字节序前缀 → **本机原生
 //!   字节序**（x86-64/ARM 上均为小端，实测 `struct.pack("I", 12) == 0c 00 00 00`）。
-//!   README 所称"4 字节大端长度前缀"与代码不符，以 Python 代码为准，本实现用
+//! README 所称"4 字节大端长度前缀"与实现不符，本实现用
 //!   `to_ne_bytes` / `from_ne_bytes` 完全对齐。
-//! - **填充**：PyCryptodome 不自动填充。Python `_to_16_length` 手工补 `\0` 至 16 的倍数：
+//! - **填充**：手工补 `\0` 至 16 的倍数：
 //!   `pad = (16 - (len(data) % 16)) % 16` —— 明文恰为 16 的倍数时**不额外补块**，
 //!   空明文保持为空（0 块）。
 //! - **密钥/IV 派生**：`sha256(密码 UTF-8 编码后补 \0 至 16 的倍数)` 得 32 字节
 //!   AES-256 密钥；IV 取该哈希的前 16 字节（`AES.new(key, MODE_CBC, self._hashed_key[:16])`）。
 //! - **hex 编码**：密文经 `b2a_hex` 以小写 hex ASCII 上线；解密用 `a2b_hex`（大小写均可）。
 //! - **空密钥直传**：key 为空时 encrypt/decrypt 原样返回字节；空密钥分支仅校验 UTF-8
-//!   且**不做** `rstrip("\0")`（与 Python 两个分支的差异保持一致）。
+//! 且**不做** `rstrip("\0")`。
 //! - **解密收尾**：CBC 解密 → UTF-8 解码 → `rstrip("\0")` 去掉尾部空字节。
 
 use std::panic::AssertUnwindSafe;
@@ -47,7 +47,7 @@ pub const KEEP_ALIVE_TIMEOUT: u64 = 15;
 pub const RECONNECT_DELAY: u64 = 5;
 pub const CONNECT_TIMEOUT: u64 = 20;
 
-/// 聊天回调：`(sender, author, message)`，内联等待（对应 Python `Callable[[str, str, str], Any]`）。
+/// 聊天回调：`(sender, author, message)`，内联等待。
 pub type ChatCallback = Arc<dyn Fn(String, String, String) -> BoxFuture<'static, ()> + Send + Sync>;
 /// 连接状态回调（on_connected / on_disconnected 共用）。
 pub type StateCallback = Arc<dyn Fn() -> BoxFuture<'static, ()> + Send + Sync>;
@@ -68,7 +68,7 @@ impl AesCryptor {
         Self { key_empty, hashed_key }
     }
 
-    /// Python `_to_16_length`：补 `\0` 至 16 的倍数（恰好对齐时不额外补块）。
+    /// 补 `\0` 至 16 的倍数（恰好对齐时不额外补块）。
     fn to_16_length(data: &[u8]) -> Vec<u8> {
         let pad = (16 - (data.len() % 16)) % 16;
         let mut out = Vec::with_capacity(data.len() + pad);
@@ -77,7 +77,7 @@ impl AesCryptor {
         out
     }
 
-    /// Python `encrypt`：空密钥 → 明文字节原样；否则 `b2a_hex(CBC 加密(零填充后明文))`。
+    /// 空密钥 → 明文字节原样；否则 `b2a_hex(CBC 加密(零填充后明文))`。
     pub fn encrypt(&self, plaintext: &[u8]) -> Vec<u8> {
         if self.key_empty {
             return plaintext.to_vec();
@@ -87,18 +87,18 @@ impl AesCryptor {
         hex::encode(ciphertext).into_bytes() // b2a_hex → 小写 hex ASCII
     }
 
-    /// Python `decrypt`：空密钥 → 原样返回（仅校验 UTF-8，不做 rstrip）；
+    /// 空密钥 → 原样返回（仅校验 UTF-8，不做 rstrip）；
     /// 否则 `a2b_hex` → CBC 解密 → UTF-8 校验 → `rstrip("\0")`。
     /// 任何畸形输入（非法 hex、长度非块对齐、非 UTF-8）一律返回 None，绝不 panic。
     pub fn decrypt(&self, wire: &[u8]) -> Option<Vec<u8>> {
         if self.key_empty {
-            // data.decode("utf-8")：非 UTF-8 → None（Python 抛 UnicodeDecodeError）
+            // data.decode("utf-8")：非 UTF-8 → None
             std::str::from_utf8(wire).ok()?;
             return Some(wire.to_vec());
         }
         let ciphertext = hex::decode(wire).ok()?; // a2b_hex；binascii.Error → None
         if ciphertext.len() % 16 != 0 {
-            return None; // PyCryptodome CBC 要求块对齐，否则 ValueError
+            return None; // CBC 要求密文块对齐，否则解密失败
         }
         let plain = cbc_decrypt(&self.hashed_key, &ciphertext);
         let text = String::from_utf8(plain).ok()?; // .decode("utf-8")；UnicodeDecodeError → None
@@ -106,8 +106,8 @@ impl AesCryptor {
     }
 }
 
-/// AES-256-CBC 加密，对应 PyCryptodome `AES.new(key, MODE_CBC, key[:16]).encrypt(padded)`。
-/// IV = 密钥前 16 字节（Python: `self._hashed_key[:16]`）；`data` 必须已按 16 字节对齐
+/// AES-256-CBC 加密（IV = 密钥前 16 字节；明文需已按 16 字节对齐）。
+/// IV = 密钥前 16 字节（`self._hashed_key[:16]`）；`data` 必须已按 16 字节对齐
 /// （零填充由 [`AesCryptor`] 完成，这里不做任何填充）。手工串 CBC 链以精确复刻其行为。
 fn cbc_encrypt(hashed_key: &[u8; 32], data: &[u8]) -> Vec<u8> {
     let cipher = Aes256::new(GenericArray::from_slice(hashed_key));
@@ -128,7 +128,7 @@ fn cbc_encrypt(hashed_key: &[u8; 32], data: &[u8]) -> Vec<u8> {
     out
 }
 
-/// AES-256-CBC 解密（密文必须已按 16 字节对齐；不做去填充 —— Python 用 `rstrip("\0")` 收尾）。
+/// AES-256-CBC 解密。
 fn cbc_decrypt(hashed_key: &[u8; 32], data: &[u8]) -> Vec<u8> {
     let cipher = Aes256::new(GenericArray::from_slice(hashed_key));
     let mut prev = [0u8; 16];
@@ -148,17 +148,17 @@ fn cbc_decrypt(hashed_key: &[u8; 32], data: &[u8]) -> Vec<u8> {
 
 /// 编码线帧：4 字节长度前缀（原生字节序）+ 载荷。
 ///
-/// ⚠️ 线格式保真：Python 原实现为
+/// ⚠️ 线格式保真：
 /// `self._writer.write(struct.pack("I", len(encrypted)) + encrypted)`
 /// —— `"I"` 无字节序前缀，即**本机原生字节序**（README 的"大端"说法与代码不符，以代码为准）。
 fn encode_frame(payload: &[u8]) -> Vec<u8> {
-    // 长度按 Python struct.pack("I", ...) 语义为 u32（实际 JSON 载荷远小于 4GiB）
+    // 长度按原生字节序的 u32 编码（实际 JSON 载荷远小于 4GiB）
     let mut out = (payload.len() as u32).to_ne_bytes().to_vec();
     out.extend_from_slice(payload);
     out
 }
 
-/// `_receive_raw` 的两类错误，对应 Python 收包循环的两档处理：
+/// `_receive_raw` 的两类错误，收包循环分两档处理：
 /// - [`RecvError::Connection`]：ConnectionError / OSError / IncompleteReadError / EOFError
 ///   —— 立即断线重连；
 /// - [`RecvError::Decode`]：解密失败 / UTF-8 失败 / JSON 解析失败 —— 计入连续错误计数。
@@ -174,7 +174,7 @@ fn recv_error_message(err: RecvError) -> String {
     }
 }
 
-/// Python `_receive_raw`：`readexactly(4)` → `struct.unpack("I", header)[0]`（原生字节序）→
+/// `readexactly(4)` → `struct.unpack("I", header)[0]`（原生字节序）→
 /// 循环 `read` 直到读满 → 解密 → `json.loads`。
 async fn receive_raw<S: AsyncRead + Unpin>(
     read: &mut S,
@@ -182,7 +182,6 @@ async fn receive_raw<S: AsyncRead + Unpin>(
 ) -> Result<Value, RecvError> {
     let mut header = [0u8; 4];
     if let Err(err) = read.read_exact(&mut header).await {
-        // Python: readexactly 在 EOF（含半包）时抛 IncompleteReadError —— 连接类错误
         return Err(RecvError::Connection(err.to_string()));
     }
     // struct.unpack("I", header)[0] —— "I" 为原生字节序（见模块注释）
@@ -220,9 +219,9 @@ fn store_slot<T>(slot: &StdMutex<Option<T>>, value: Option<T>) {
     *slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
 }
 
-/// Python `str(payload.get(key, 默认 ""))` 的语义：
-/// 键不存在 → ""；null → "None"（Python 的 `str(None)`）；bool → "True"/"False"；
-/// 数字 → 十进制串；数组/对象 → JSON 表示（与 Python repr 有细微差异，协议中不应出现）。
+/// 取值语义（缺失 → 默认 ""）：
+/// 键不存在 → ""；null → "None"；bool → "True"/"False"；
+/// 数字 → 十进制串；数组/对象 → JSON 表示（协议中不应出现）。
 fn py_str(value: Option<&Value>) -> String {
     match value {
         None => String::new(),
@@ -236,7 +235,7 @@ fn py_str(value: Option<&Value>) -> String {
 }
 
 /// 客户端共享内部状态（`ChatBridgeClient` 内部持有 `Arc<Inner>`，供收包循环、
-/// keep-alive 任务与外部 send_chat 并发使用；对应 Python 实例上的可变字段）。
+/// keep-alive 任务与外部 send_chat 并发使用）。
 struct Inner {
     host: String,
     port: u16,
@@ -244,13 +243,13 @@ struct Inner {
     password: String,
     cryptor: AesCryptor,
 
-    /// Python `self._running`
+    /// 运行标志
     running: AtomicBool,
-    /// Python `self._connected`
+    /// 连接标志
     connected: AtomicBool,
-    /// Python `self._writer`（None = 已关闭；锁串行化并发写，等价事件循环的单线程写）
+    /// 写句柄（None = 已关闭；锁串行化并发写，等价单线程写）
     writer: TokioMutex<Option<OwnedWriteHalf>>,
-    /// Python `self._pong_event`（asyncio.Event）的等价物：收到任意 pong 即 send；
+    /// pong 信号：收到任意 pong 即 send；
     /// keep-alive 周期开头 `borrow_and_update` 消费当前值，等价于 `clear()`。
     pong_tx: watch::Sender<u64>,
 
@@ -260,7 +259,7 @@ struct Inner {
 }
 
 impl Inner {
-    /// Python `_send_raw`：`json.dumps(data, ensure_ascii=False)` → encrypt →
+    /// `json.dumps(data, ensure_ascii=False)` → encrypt →
     /// `struct.pack("I", len(encrypted)) + encrypted` → 写出 + drain。
     async fn send_raw(&self, packet: &Value) -> Result<(), String> {
         let payload = serde_json::to_vec(packet).map_err(|e| e.to_string())?;
@@ -273,14 +272,14 @@ impl Inner {
                 writer.flush().await.map_err(|e| e.to_string())?; // 对应 await writer.drain()
                 Ok(())
             }
-            None => Err("writer is None".to_string()), // Python: raise ConnectionError("writer is None")
+            None => Err("writer is None".to_string()), // 写句柄已关闭
         }
     }
 
-    /// Python `_send_packet`：未连接时**静默** return（Python 无日志）；发送失败仅告警，不向上抛。
+    /// 未连接时**静默** return；发送失败仅告警，不向上抛。
     async fn send_packet(&self, packet: &Value) {
         if !self.connected.load(Ordering::SeqCst) {
-            return; // Python: `if not self._connected or self._writer is None: return`
+            return; // 未连接或写句柄已关闭 → 直接返回
         }
         if let Err(err) = self.send_raw(packet).await {
             tracing::warn!("ChatBridge 发送失败: {}", err);
@@ -332,18 +331,17 @@ impl ChatBridgeClient {
         store_slot(&self.inner.on_disconnected, Some(callback));
     }
 
-    /// Python `is_connected` 属性。
+    /// 连接状态。
     pub fn is_connected(&self) -> bool {
         self.inner.connected.load(Ordering::SeqCst)
     }
 
-    /// 置位/清除运行标志（run() 入口置 true；stop() 置 false；测试可借此直接驱动单次会话，
-    /// 等价于 Python 测试注入 `client._running = True`）。
+    /// 置位/清除运行标志（run() 入口置 true；stop() 置 false；测试可借此直接驱动单次会话）。
     fn set_running(&self, value: bool) {
         self.inner.running.store(value, Ordering::SeqCst);
     }
 
-    /// 生命周期主循环（对应 Python `run`）：连接+登录 → on_connected → keep-alive →
+    /// 生命周期主循环：连接+登录 → on_connected → keep-alive →
     /// 收包循环 → on_disconnected → `RECONNECT_DELAY` 秒后重连；`stop()` 置位后
     /// 当前轮结束即退出，不再重连。
     pub async fn run(self: Arc<Self>) {
@@ -358,20 +356,20 @@ impl ChatBridgeClient {
         }
     }
 
-    /// 单次"连接+会话"尝试（对应 Python run() 的单次 while 迭代体）。测试可不经外层
+    /// 单次"连接+会话"尝试。测试可不经外层
     /// 重连循环直接驱动本方法。
     async fn run_once(&self) {
         match self.connect_and_login().await {
             Ok(read) => self.run_session(read).await,
             Err(err) => {
                 tracing::error!("ChatBridge 连接异常: {}", err);
-                // Python finally：无论成败都关流并触发 on_disconnected
+                // 会话收尾：无论成败都关流并触发 on_disconnected
                 self.finalize().await;
             }
         }
     }
 
-    /// Python `stop`：仅置位标志；收包循环在下一个包边界退出，run() 不再重连。
+    /// 仅置位标志；收包循环在下一个包边界退出，run() 不再重连。
     pub fn stop(&self) {
         self.set_running(false);
     }
@@ -400,7 +398,7 @@ impl ChatBridgeClient {
             .await;
     }
 
-    /// Python `_connect_and_login`：整体包在 `CONNECT_TIMEOUT` 内，超时按握手失败处理。
+    /// 整体包在 `CONNECT_TIMEOUT` 内，超时按握手失败处理。
     async fn connect_and_login(&self) -> Result<OwnedReadHalf, String> {
         tracing::info!("ChatBridge 正在连接 {}:{} ...", self.inner.host, self.inner.port);
         match tokio::time::timeout(
@@ -418,14 +416,14 @@ impl ChatBridgeClient {
         }
     }
 
-    /// Python `_connect_and_login_inner`：建立 TCP → 发登录帧 → 等 `{"message": "ok"}`。
+    /// 建立 TCP → 发登录帧 → 等 `{"message": "ok"}`。
     async fn connect_and_login_inner(&self) -> Result<OwnedReadHalf, String> {
         let stream = TcpStream::connect((self.inner.host.as_str(), self.inner.port))
             .await
             .map_err(|e| format!("连接失败: {}", e))?;
         let (read, write) = stream.into_split();
         *self.inner.writer.lock().await = Some(write);
-        // 登录帧走 _send_raw（不检查 connected），失败直接上抛（Python 同）
+        // 登录帧走 _send_raw（不检查 connected），失败直接上抛
         self.inner
             .send_raw(&json!({
                 "name": self.inner.name,
@@ -441,7 +439,7 @@ impl ChatBridgeClient {
         }
     }
 
-    /// 单次连接会话（对应 Python run() try 块主体）：置 connected → on_connected →
+    /// 单次连接会话：置 connected → on_connected →
     /// keep-alive → 收包循环 → 结束后 finalize（connected=false、关流、on_disconnected）。
     /// 测试可不经外层重连循环直接驱动本方法。
     async fn run_session(&self, read: OwnedReadHalf) {
@@ -452,14 +450,14 @@ impl ChatBridgeClient {
         let (dead_tx, dead_rx) = watch::channel(false);
         let keep_alive = tokio::spawn(keep_alive_loop(Arc::clone(&self.inner), dead_tx));
         receive_loop(&self.inner, read, dead_rx).await;
-        keep_alive.abort(); // Python: keep_alive_task.cancel()
+        keep_alive.abort(); // 取消 keep-alive 任务
 
-        // Python run() finally：connected=False → _close() → on_disconnected
+        // 会话收尾：connected=False → 关流 → on_disconnected
         self.finalize().await;
     }
 
-    /// Python run() 的 finally + `_close()`：connected=False，关流（错误吞掉），
-    /// 触发 on_disconnected（无论本次会话成败都会触发，与 Python finally 一致）。
+    /// 会话收尾（`finalize`）：connected=False，关流（错误吞掉），
+    /// 触发 on_disconnected。
     async fn finalize(&self) {
         self.inner.connected.store(false, Ordering::SeqCst);
         if let Some(mut writer) = self.inner.writer.lock().await.take() {
@@ -468,7 +466,7 @@ impl ChatBridgeClient {
         self.fire_state_callback(&self.inner.on_disconnected).await;
     }
 
-    /// 触发状态回调（Python `_call_callback`：异常只记日志，不上抛）。
+    /// 触发状态回调（异常只记日志，不上抛）。
     async fn fire_state_callback(&self, slot: &StdMutex<Option<StateCallback>>) {
         if let Some(callback) = clone_slot(slot) {
             if let Err(err) = AssertUnwindSafe(callback()).catch_unwind().await {
@@ -478,7 +476,7 @@ impl ChatBridgeClient {
     }
 }
 
-/// Python `_keep_alive_loop`：每 `KEEP_ALIVE_INTERVAL` 秒向 `#SERVER` 发 ping；
+/// 每 `KEEP_ALIVE_INTERVAL` 秒向 `#SERVER` 发 ping；
 /// `KEEP_ALIVE_TIMEOUT` 内没有 pong → 主动断流，令收包循环退出并重连。
 async fn keep_alive_loop(inner: Arc<Inner>, dead_tx: watch::Sender<bool>) {
     while inner.running.load(Ordering::SeqCst) && inner.connected.load(Ordering::SeqCst) {
@@ -486,7 +484,6 @@ async fn keep_alive_loop(inner: Arc<Inner>, dead_tx: watch::Sender<bool>) {
         if !inner.connected.load(Ordering::SeqCst) {
             break;
         }
-        // Python: self._pong_event.clear() —— 把当前计数标记为已读，陈旧 pong 不计入
         let mut pong_rx = inner.pong_tx.subscribe();
         let _ = *pong_rx.borrow_and_update();
 
@@ -504,7 +501,6 @@ async fn keep_alive_loop(inner: Arc<Inner>, dead_tx: watch::Sender<bool>) {
             Ok(_) => {}
             Err(_) => {
                 tracing::warn!("ChatBridge keep-alive 超时，主动断开重连");
-                // Python: await self._close() —— connected=False + 关流
                 inner.connected.store(false, Ordering::SeqCst);
                 if let Some(mut writer) = inner.writer.lock().await.take() {
                     let _ = writer.shutdown().await;
@@ -516,7 +512,7 @@ async fn keep_alive_loop(inner: Arc<Inner>, dead_tx: watch::Sender<bool>) {
     }
 }
 
-/// Python `_receive_loop`：连接类错误立即跳出重连；其余错误连续 5 次后按断线处理。
+/// 连接类错误立即跳出重连；其余错误连续 5 次后按断线处理。
 async fn receive_loop(inner: &Inner, mut read: OwnedReadHalf, mut dead_rx: watch::Receiver<bool>) {
     let mut consecutive_errors: u32 = 0;
     while inner.running.load(Ordering::SeqCst) && inner.connected.load(Ordering::SeqCst) {
@@ -543,7 +539,7 @@ async fn receive_loop(inner: &Inner, mut read: OwnedReadHalf, mut dead_rx: watch
                 }
             },
             _ = dead_rx.changed() => {
-                // keep-alive 超时已主动断流（Python: _close() 使 readexactly 抛 IncompleteReadError）
+                // keep-alive 超时已主动断流（_close() 使 readexactly 抛 IncompleteReadError）
                 tracing::warn!("ChatBridge 连接断开: 连接已被主动关闭");
                 break;
             }
@@ -566,8 +562,8 @@ async fn receive_loop(inner: &Inner, mut read: OwnedReadHalf, mut dead_rx: watch
     }
 }
 
-/// Python `_dispatch`。只有"顶层不是 JSON 对象"才算处理错误（Python 里 `packet.get`
-/// 会抛 AttributeError）；其余分支与 Python 一致地自带容错，不会向外抛错。
+/// 事件分发：只有"顶层不是 JSON 对象"才算处理错误（其余取键会报错）；
+/// 其余分支自带容错，不会向外抛错。
 async fn dispatch(inner: &Inner, packet: &Value) -> Result<(), String> {
     let obj = match packet.as_object() {
         Some(obj) => obj,
@@ -577,7 +573,7 @@ async fn dispatch(inner: &Inner, packet: &Value) -> Result<(), String> {
     let sender = obj.get("sender").and_then(Value::as_str).unwrap_or("");
     let payload = match obj.get("payload") {
         Some(p) if p.is_object() => p,
-        _ => return Ok(()), // Python: not isinstance(payload, dict) → return
+        _ => return Ok(()), // payload 不是对象 → 直接返回
     };
 
     if ptype == PACKET_TYPE_KEEP_ALIVE {
@@ -594,7 +590,6 @@ async fn dispatch(inner: &Inner, packet: &Value) -> Result<(), String> {
                 }))
                 .await;
         } else if ping_type == "pong" {
-            // Python: self._pong_event.set()
             let _ = inner.pong_tx.send(1);
         }
     } else if ptype == PACKET_TYPE_CHAT {
@@ -602,7 +597,7 @@ async fn dispatch(inner: &Inner, packet: &Value) -> Result<(), String> {
         let message = py_str(payload.get("message"));
         if !message.is_empty() {
             if let Some(callback) = clone_slot(&inner.on_chat) {
-                // 回调内联等待；异常只记日志（Python _call_callback），绝不能打断收包循环
+                // 回调内联等待；异常只记日志，绝不能打断收包循环
                 let fut = callback(sender.to_string(), author, message);
                 if let Err(err) = AssertUnwindSafe(fut).catch_unwind().await {
                     tracing::error!("ChatBridge 回调异常: {:?}", err);
@@ -654,26 +649,25 @@ mod tests {
     #[test]
     fn aes_empty_key_passthrough_exact_bytes() {
         let cryptor = AesCryptor::new("");
-        // Python: encrypt → text.encode("utf-8") 原样返回（非 UTF-8 字节也原样透传）
         let plaintext: &[u8] = b"\x01\x02 raw {\"json\":true} \xff\xfe";
         assert_eq!(cryptor.encrypt(plaintext), plaintext.to_vec());
         // 空密钥分支不做 rstrip("\0")：尾部 \0 原样保留
         let with_nul: &[u8] = b"abc\0\0";
         assert_eq!(cryptor.decrypt(with_nul), Some(with_nul.to_vec()));
-        // 非 UTF-8 → None（对应 Python data.decode("utf-8") 抛 UnicodeDecodeError）
+        // 非 UTF-8 → None
         assert_eq!(cryptor.decrypt(b"\xff\xfe"), None);
     }
 
     #[test]
     fn aes_known_answers_from_python_reference() {
-        // 向量由原 Python 实现（PyCryptodome，src/chatroom_bridge/chatbridge.py）直接生成。
+        // 固定测试向量（保证加解密逐字节兼容）。
         let cryptor = AesCryptor::new("ThisIstheSecret");
         // 密钥派生：15 字节密码补 1 个 \0 → sha256 = 8e950f2b...674a
         assert_eq!(
             cryptor.encrypt(b"hello world"),
             b"a687744a874514b4c6cf5a819395726e".to_vec()
         );
-        // 恰好 16 字节 → 不额外补块（PyCryptodome 无自动填充的直接证据）
+        // 恰好 16 字节 → 不额外补块
         assert_eq!(
             cryptor.encrypt(&[b'A'; 16]),
             b"28d58b11ae093009fc42ee7348b6f81b".to_vec()
@@ -683,7 +677,7 @@ mod tests {
             cryptor.encrypt("The quick brown fox jumps over the lazy dog".as_bytes()),
             b"3721962b807a8fba617dbcc24342a77c47df2622781d6a7191b3e65166cb53b0e69640c01b5068ddbdc68d4907acd658".to_vec()
         );
-        // 空明文 → 0 块 → 空密文（与 Python 一致）
+        // 空明文 → 0 块 → 空密文
         assert_eq!(cryptor.encrypt(b""), Vec::<u8>::new());
         assert_eq!(
             cryptor.decrypt(b"a687744a874514b4c6cf5a819395726e").as_deref(),
@@ -699,15 +693,15 @@ mod tests {
             cryptor.decrypt(&cryptor.encrypt(b"payload")).as_deref(),
             Some(&b"payload"[..])
         );
-        // 非法 hex 字符（Python: binascii.Error）
+        // 非法 hex 字符（binascii.Error）
         let mut bad = cryptor.encrypt(b"payload");
         bad[0] = b'z';
         assert_eq!(cryptor.decrypt(&bad), None);
-        // 奇数长度 hex（Python: binascii.Error）
+        // 奇数长度 hex（binascii.Error）
         assert_eq!(cryptor.decrypt(b"abc"), None);
-        // hex 合法但密文不是块对齐（Python: ValueError）
+        // hex 合法但密文不是块对齐（ValueError）
         assert_eq!(cryptor.decrypt(b"00"), None);
-        // 块对齐但解密结果不是 UTF-8（Python: UnicodeDecodeError）
+        // 块对齐但解密结果不是 UTF-8（UnicodeDecodeError）
         assert_eq!(cryptor.decrypt(&[b'f'; 32]), None);
     }
 
@@ -718,7 +712,6 @@ mod tests {
         let payload = serde_json::to_vec(&json!({"name": "A"})).unwrap();
         assert_eq!(payload, b"{\"name\":\"A\"}".to_vec());
         let frame = encode_frame(&payload);
-        // Python: struct.pack("I", 12) → 本机原生字节序（小端）0c 00 00 00
         let mut expected = vec![0x0c, 0x00, 0x00, 0x00];
         expected.extend_from_slice(b"{\"name\":\"A\"}");
         assert_eq!(frame, expected);
@@ -737,7 +730,7 @@ mod tests {
         let value = receive_raw(&mut cursor, &cryptor).await.unwrap();
         assert_eq!(value, json!({"name": "A"}));
 
-        // 半截头部 → 连接类错误（Python: readexactly 抛 IncompleteReadError）
+        // 半截头部 → 连接类错误（readexactly 抛 IncompleteReadError）
         let mut partial: &[u8] = &frame[..2];
         assert!(matches!(
             receive_raw(&mut partial, &cryptor).await,
@@ -907,7 +900,7 @@ mod tests {
             let login = receive_raw(&mut r, &cryptor).await.unwrap();
             assert_eq!(login["name"], "web");
             send_packet_to(&mut w, &cryptor, &json!({"message": "ok"})).await;
-            // 立即断开：模拟 Python 测试的 EofReader
+            // 立即断开：模拟对端 EOF
             drop(r);
             drop(w);
         });
@@ -927,7 +920,7 @@ mod tests {
             })
         }));
 
-        // 直接驱动单次会话（不走外层重连循环），等价于 Python 测试注入 _running=True
+        // 直接驱动单次会话（不走外层重连循环）。
         client.set_running(true);
         let driver = Arc::clone(&client);
         let session = tokio::spawn(async move {
@@ -1034,7 +1027,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_while_disconnected_is_silent_noop() {
-        // Python _send_packet：未连接时静默 return（无日志、无 panic、无 IO）
+        // 未连接时静默 return（无日志、无 panic、无 IO）
         let client = ChatBridgeClient::new("127.0.0.1", 1, "n", "p", "");
         assert!(!client.is_connected());
         client.send_chat("mc", "hello", "tester").await;

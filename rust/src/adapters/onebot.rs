@@ -1,4 +1,4 @@
-//! OneBot v11 反向 WS 服务端 + 动作调用（axum 实现，对应 Python `onebot.py`）。
+//! OneBot v11 反向 WS 服务端 + 动作调用。
 //!
 //! NapCat 作为客户端连入 ``ws://<host>:<port><path>``：
 //!
@@ -7,7 +7,7 @@
 //! * 收 `post_type=message` / `message_type=group` 事件，解析为 [`GroupMessage`]
 //! * 通过同一条连接发送动作（`send_group_msg` 等），按 `echo` 匹配响应
 //!
-//! 关键设计（Python `_consume` 的文档字符串，且有回归测试）：事件必须在独立的
+//! 关键设计（且有回归测试）：事件必须在独立的
 //! 消费者任务里顺序处理，绝不能在 WS 读取循环内 await 处理器 —— 处理器经常
 //! 会通过同一条 WS 调用动作（发回复等），若在读取循环里等待处理器，echo 响应
 //! 就永远读不到，只能一直卡到动作超时。这里用「读取循环 → 解析 → 入队 →
@@ -40,19 +40,19 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{interval_at, sleep, timeout};
 
-/// 单条连接的动作调用超时（Python 默认 20.0s）。
+/// 单条连接的动作调用超时。
 const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(20);
-/// 心跳：每 30s 发一个 WS Ping（对齐 aiohttp `heartbeat=30.0`）。
+/// 心跳：每 30s 发一个 WS Ping。
 const HEARTBEAT: Duration = Duration::from_secs(30);
-/// 单条消息上限 16 MiB（对齐 aiohttp `max_msg_size=16 * 1024 * 1024`）。
+/// 单条消息上限 16 MiB。
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
 
-/// 群消息处理器（Python `GroupMessageHandler` 的 Rust 形式）。
+/// 群消息处理器。
 pub type GroupMessageHandler = Arc<
     dyn Fn(Arc<OneBotConnection>, GroupMessage) -> BoxFuture<'static, ()> + Send + Sync,
 >;
 
-/// OneBot 消息段（Python 的 `type` 字段改名 `kind`，避免与关键字撞名）。
+/// OneBot 消息段（避免与关键字撞名）。
 #[derive(Debug, Clone, Default)]
 pub struct Segment {
     pub kind: String,
@@ -60,22 +60,22 @@ pub struct Segment {
 }
 
 impl Segment {
-    /// Python: `str(data.get("text") or "")`
+    /// `str(data.get("text") or "")`
     pub fn text(&self) -> String {
         py_str(self.data.get("text"))
     }
 
-    /// Python: `str(data.get("file") or "")`
+    /// `str(data.get("file") or "")`
     pub fn file(&self) -> String {
         py_str(self.data.get("file"))
     }
 
-    /// Python: `str(data.get("url") or "")`
+    /// `str(data.get("url") or "")`
     pub fn url(&self) -> String {
         py_str(self.data.get("url"))
     }
 
-    /// Python: `str(data.get("summary") or "")`
+    /// `str(data.get("summary") or "")`
     pub fn summary(&self) -> String {
         py_str(self.data.get("summary"))
     }
@@ -94,7 +94,7 @@ pub struct GroupMessage {
 }
 
 impl GroupMessage {
-    /// Python: `card or nickname or str(user_id)`
+    /// `card or nickname or str(user_id)`
     pub fn display_name(&self) -> String {
         if !self.card.is_empty() {
             self.card.clone()
@@ -126,7 +126,7 @@ impl GroupMessage {
                 .any(|seg| seg.kind == "at" && json_int(seg.data.get("qq")) == target)
     }
 
-    /// 第一个 reply 段的 `data["id"]`（Python: `str(value) if value else None`）。
+    /// 第一个 reply 段的 `data["id"]`（`str(value) if value else None`）。
     pub fn reply_message_id(&self) -> Option<String> {
         for seg in &self.segments {
             if seg.kind == "reply" {
@@ -149,7 +149,7 @@ impl GroupMessage {
             .collect()
     }
 
-    /// at 段的 `data["qq"]`。Python: `isinstance(qq, (int, str)) and str(qq).isdigit()`，
+    /// at 段的 `data["qq"]`。仅当是整数或纯数字字符串时才算有效，
     /// 即负数 / 浮点 / 非纯数字字符串都不算。
     pub fn at_user_ids(&self) -> Vec<i64> {
         self.segments
@@ -168,7 +168,7 @@ impl GroupMessage {
             .collect()
     }
 
-    /// 调试摘要（对齐 Python `describe`）。
+    /// 调试摘要。
     pub fn describe(&self) -> String {
         format!(
             "群={} 用户={}({}) 消息ID={}",
@@ -180,7 +180,7 @@ impl GroupMessage {
     }
 }
 
-/// Python 的 falsy 判定（None / False / 0 / "" / 空容器 → false）。
+/// 假值判定（None / false / 0 / "" / 空容器 → false）。
 fn is_truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
@@ -192,7 +192,7 @@ fn is_truthy(value: &Value) -> bool {
     }
 }
 
-/// Python `str(v or "")`：假值 → 空串；字符串原样；其它类型按 JSON 文本化。
+/// 假值 → 空串；字符串原样；其它类型按 JSON 文本化。
 fn py_str(value: Option<&Value>) -> String {
     match value.filter(|v| is_truthy(v)) {
         Some(Value::String(s)) => s.clone(),
@@ -201,7 +201,7 @@ fn py_str(value: Option<&Value>) -> String {
     }
 }
 
-/// Python `int(v or 0)` 的容错版：缺失 / 假值 → 0；数字或数字字符串 → 数值。
+/// 取整容错版：缺失 / 假值 → 0；数字或数字字符串 → 数值。
 fn json_int(value: Option<&Value>) -> i64 {
     let Some(value) = value.filter(|v| is_truthy(v)) else {
         return 0;
@@ -241,7 +241,7 @@ pub fn parse_segments(message: &Value) -> Vec<Segment> {
             };
             let kind = match seg_type {
                 Value::String(s) => s.clone(),
-                // Python `str(seg_type)` 的等价兜底（数字等非常规类型）
+                // 非常规类型（数字等）的兜底转字符串
                 other => other.to_string(),
             };
             // dict(data) if isinstance(data, dict) else {}
@@ -276,7 +276,7 @@ pub fn parse_group_message(raw: &Value) -> Option<GroupMessage> {
     })
 }
 
-/// 动作调用错误（对应 Python 的 ConnectionError / asyncio.TimeoutError / RuntimeError）。
+/// 动作调用错误。
 #[derive(Debug, thiserror::Error)]
 pub enum OneBotError {
     #[error("OneBot 连接已关闭")]
@@ -291,7 +291,7 @@ pub enum OneBotError {
 pub struct OneBotConnection {
     /// 发往 WS 写任务的消息通道（动作请求从这里出去）。
     outbound: mpsc::UnboundedSender<Message>,
-    /// echo 自增计数（Python `itertools.count(1)`：首个 echo 为 1）。
+    /// echo 自增计数（首个 echo 为 1）。
     counter: AtomicU64,
     call_timeout: Duration,
     /// lifecycle meta 事件里的 self_id。
@@ -318,7 +318,7 @@ impl OneBotConnection {
         self.self_id.load(Ordering::Relaxed)
     }
 
-    /// WS 未关闭（对齐 Python `not ws.closed`）。
+    /// WS 未关闭。
     pub fn connected(&self) -> bool {
         !self.closed.load(Ordering::Relaxed)
     }
@@ -360,7 +360,7 @@ impl OneBotConnection {
         let Some(echo_value) = payload.get("echo") else {
             return false;
         };
-        // echo 兼容数字与数字字符串（Python 侧按 str(echo) 匹配）
+        // echo 兼容数字与数字字符串
         let Some(echo) = echo_value
             .as_u64()
             .or_else(|| echo_value.as_str().and_then(|s| s.trim().parse().ok()))
@@ -373,10 +373,8 @@ impl OneBotConnection {
         let status_ok = payload.get("status").and_then(Value::as_str) == Some("ok");
         let retcode = payload.get("retcode").and_then(Value::as_i64);
         if status_ok || retcode == Some(0) {
-            // Python: future.set_result(payload.get("data"))（缺失即 None）
             let _ = sender.send(Ok(payload.get("data").cloned().unwrap_or(Value::Null)));
         } else {
-            // Python: detail = message or wording or ""
             let detail = ["message", "wording"]
                 .iter()
                 .find_map(|key| {
@@ -384,7 +382,7 @@ impl OneBotConnection {
                     if text.is_empty() { None } else { Some(text) }
                 })
                 .unwrap_or_default();
-            // retcode 缺失时 Python 会打印 None，这里以 0 表示
+            // retcode 缺失时以 0 表示
             let retcode = retcode.unwrap_or_default();
             let _ = sender.send(Err(OneBotError::Failed { retcode, detail }));
         }
@@ -476,7 +474,7 @@ impl Shared {
         self.queue_tx.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// 最后一条仍连接的连接（Python `connection` 属性：存在且 connected 才返回）。
+    /// 最后一条仍连接的连接（存在且 connected 才返回）。
     fn live_connection(&self) -> Option<Arc<OneBotConnection>> {
         self.lock_connection()
             .clone()
@@ -518,7 +516,7 @@ impl OneBotServer {
     ) -> Self {
         let mut path = path.into();
         if !path.starts_with('/') {
-            path.insert(0, '/'); // Python: path = "/" + path
+            path.insert(0, '/'); // 确保以 / 开头
         }
         let (shutdown, _) = watch::channel(false);
         Self {
@@ -630,7 +628,7 @@ impl OneBotServer {
         };
         if let Some(consumer) = consumer {
             consumer.abort();
-            let _ = consumer.await; // 对齐 Python: cancel + 抑制 CancelledError
+            let _ = consumer.await; // cancel + 抑制取消错误
         }
         // 优雅停机：停止接受新连接；各 WS 读取循环监听同一信号，收到后退出
         let _ = self.shared.shutdown.send(true);
@@ -646,7 +644,7 @@ impl OneBotServer {
         self.shared.live_connection()
     }
 
-    /// 每 0.5s 轮询，直到出现可用连接或超时（超时时做最后一次检查，对齐 Python）。
+    /// 每 0.5s 轮询，直到出现可用连接或超时。
     pub async fn wait_connection(&self, timeout: Duration) -> Option<Arc<OneBotConnection>> {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
@@ -733,7 +731,6 @@ async fn ws_handler(
 async fn handle_socket(shared: Arc<Shared>, socket: WebSocket) {
     let (outbound, mut outbound_rx) = mpsc::unbounded_channel();
     let conn = Arc::new(OneBotConnection::new(outbound));
-    // Python: self._connection = conn（直接覆盖旧连接）
     *shared.lock_connection() = Some(conn.clone());
     let count = shared.connections.fetch_add(1, Ordering::Relaxed) + 1;
     tracing::info!("OneBot 客户端已连接（第 {count} 次）");
@@ -786,7 +783,6 @@ async fn handle_socket(shared: Arc<Shared>, socket: WebSocket) {
     }
     writer.abort();
 
-    // Python: if self._connection is conn: self._connection = None
     let mut slot = shared.lock_connection();
     if slot.as_ref().is_some_and(|current| Arc::ptr_eq(current, &conn)) {
         *slot = None;
@@ -848,7 +844,7 @@ fn authorized(token: &str, headers: &HeaderMap, query: Option<&str>) -> bool {
         .is_some_and(|value| value == token)
 }
 
-/// 取查询字符串里的某个参数（对齐 aiohttp `request.query`：%XX 解码 + '+'→空格）。
+/// 取查询字符串里的某个参数（%XX 解码 + '+'→空格）。
 fn query_param(query: &str, key: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let (name, value) = match pair.split_once('=') {

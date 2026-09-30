@@ -1,5 +1,5 @@
 //! 服务装配与生命周期：把 OneBot 服务端、chatroom 双向同步、ChatBridge、玩家追踪、
-//! 命令路由接到一起（对应 Python 版 `main.py` 的 `BridgeService`）。
+//! 命令路由接到一起。
 //!
 //! v0.4 起按子服务边界组织（见 [`crate::subsystem`]）：消息路径拆在同级的
 //! [`qq`] / [`chatroom`] / [`game`] 子模块（`impl BridgeService` 的分区），

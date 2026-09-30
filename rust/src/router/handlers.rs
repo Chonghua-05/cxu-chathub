@@ -11,7 +11,7 @@ use crate::services::commands::{parse_command, CommandService};
 
 /// `/chatroom` `/server`（`/status` 为兼容别名）：解析、鉴权与应答委托给 [`CommandService`]。
 ///
-/// 消费语义与 Python 版一致：非命令、未授权（静默）或空结果返回 `false`，
+/// 消费语义：非命令、未授权（静默）或空结果返回 `false`，
 /// 消息继续进入转发流水线；命中并应答后返回 `true`。
 pub struct SlashCommandAdapter {
     pub commands: Arc<CommandService>,
@@ -55,7 +55,7 @@ impl CommandHandler for SlashCommandAdapter {
 }
 
 /// `!q <内容>`：把 chatroom / 游戏内消息转发到 QQ 群。
-/// QQ 端没有这个语义（群里的 `!q xxx` 会原样转发到 chatroom），与 Python 行为一致。
+/// QQ 端没有这个语义（群里的 `!q xxx` 会原样转发到 chatroom）。
 pub struct QqForwardRelay {
     pub enabled: bool,
 }
@@ -101,7 +101,7 @@ impl CommandHandler for QqForwardRelay {
 }
 
 /// `!snap <内容>`：快照服（指定 ChatBridge 客户端名）的更新通知，转发到 QQ 群。
-/// 只认 `sender` 客户端名，玩家无法冒用——与 Python 的 `_is_snapshot_notice` 一致。
+/// 只认 `sender` 客户端名，玩家无法冒用。
 pub struct SnapshotRelay {
     pub enabled: bool,
     pub sender: String,

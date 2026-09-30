@@ -1,6 +1,6 @@
 //! 持久化状态：去重表、读游标、refresh_token、已播报的版本更新。
 //! 写入策略：临时文件 + fsync + 原子 rename；读取损坏时丢弃重建，不让坏文件卡死启动。
-//! `state.json` 格式与 Python 版逐字节兼容（v0.5 新增字段向后兼容，缺省为空）。
+//! `state.json` 格式逐字节兼容（v0.5 新增字段向后兼容，缺省为空）。
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

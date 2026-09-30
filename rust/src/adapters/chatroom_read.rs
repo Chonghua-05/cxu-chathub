@@ -1,6 +1,6 @@
 //! 读方向：轮询 chatroom 频道消息，供 `!q` 与 chatroom→游戏使用。
 //!
-//! 对齐 Python 版 `chatroom_bridge/chatroom_read.py`：
+//! 行为约定：
 //! - [`extract_qq_forward`] 解析 `!q` 前缀消息；
 //! - [`ChatroomReader`] 轮询频道消息并维护读游标（游标持久化在 state.json）。
 
@@ -20,11 +20,10 @@ pub const QQ_FORWARD_PREFIX: &str = "!q";
 /// `!q xxx` -> `xxx`；不是 !q 消息返回 None。
 ///
 /// 整个前缀大小写不敏感（`!Q` 同样命中）；返回去掉前缀并 trim 的载荷；
-/// 裸 `!q`（空载荷）返回 None。与 Python 版逐行为对齐。
+/// 裸 `!q`（空载荷）返回 None。
 pub fn extract_qq_forward(content: &str) -> Option<String> {
     let stripped = content.trim();
-    // Python: stripped.lower().startswith("!q")。Unicode 中仅 'Q' 会小写成 'q'（'!' 无大小写），
-    // 因此对前两个字节做 ASCII 不敏感比较与 Python 行为完全等价。
+    // 因此对前两个字节做 ASCII 不敏感比较。
     let prefix = QQ_FORWARD_PREFIX.as_bytes();
     if stripped.len() < prefix.len()
         || !stripped.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix)
@@ -34,7 +33,7 @@ pub fn extract_qq_forward(content: &str) -> Option<String> {
     // 前缀两个字节均为 ASCII，字节下标 2 一定是字符边界。
     let payload = stripped[prefix.len()..].trim();
     if payload.is_empty() {
-        None // Python: return payload or None
+        None // 空载荷 → None
     } else {
         Some(payload.to_string())
     }
@@ -58,15 +57,15 @@ pub struct ChatroomReader {
     store: Option<Arc<StateStore>>,
     client: reqwest::Client,
     cursor: Mutex<i64>,
-    /// 首次 poll 是否已完成（Python `_initialized`）。
+    /// 首次 poll 是否已完成。
     initialized: AtomicBool,
     fetch_limit: usize,
-    /// Python `skip_backlog_on_start`；Rust 构造 API 未暴露，恒为 true。
+    /// 启动时跳过历史积压；构造 API 未暴露，恒为 true。
     skip_backlog: bool,
 }
 
-/// Python `int(m.get("id") or 0)`：缺失/非数值按 0 处理；
-/// 数字字符串与浮点按 Python `int()` 语义解析/取整（无法解析按 0）。
+/// 缺失/非数值按 0 处理；
+/// 数字字符串与浮点按整数语义解析/取整（无法解析按 0）。
 fn message_id(message: &Value) -> i64 {
     match message.get("id") {
         None | Some(Value::Null) => 0,
@@ -74,13 +73,13 @@ fn message_id(message: &Value) -> i64 {
             .as_i64()
             .unwrap_or_else(|| n.as_f64().map_or(0, |f| f.trunc() as i64)),
         Some(Value::String(s)) => s.trim().parse::<i64>().unwrap_or(0),
-        Some(Value::Bool(b)) => i64::from(*b), // Python: int(True) == 1
+        Some(Value::Bool(b)) => i64::from(*b), // true → 1
         _ => 0,
     }
 }
 
 impl ChatroomReader {
-    /// 读超时 total 15s / connect 5s（对齐 Python aiohttp.ClientTimeout(total=15, sock_connect=5)）；
+    /// 读超时 total 15s / connect 5s；
     /// 游标从 store 播种。
     pub fn new(
         base_url: impl Into<String>,
@@ -94,7 +93,6 @@ impl ChatroomReader {
             .build()?;
         let seeded = store.as_ref().map(|s| s.last_read_message_id()).unwrap_or(0);
         Ok(Self {
-            // Python: base_url.rstrip("/")
             base_url: base_url.into().trim_end_matches('/').to_string(),
             channel_id,
             auth,
@@ -130,7 +128,7 @@ impl ChatroomReader {
         )
     }
 
-    /// Python `_advance`：只前进不后退；前进时经 store 持久化。
+    /// 只前进不后退；前进时经 store 持久化。
     fn advance(&self, message_id: i64) {
         {
             let mut cursor = self.lock_cursor();
@@ -175,7 +173,6 @@ impl ChatroomReader {
             warn!("读取频道消息失败 HTTP {}", status.as_u16());
             return None;
         }
-        // Python: resp.json(content_type=None) —— 不校验 Content-Type；解析失败按拉取失败处理。
         let data: Value = match response.json().await {
             Ok(data) => data,
             Err(err) => {
@@ -233,7 +230,7 @@ impl ChatroomReader {
             return false;
         };
         match message.get("user_id") {
-            // 数值比较（浮点 999.0 与整数 999 在 Python 中相等，这里保持一致）。
+            // 数值比较（这里保持一致）。
             Some(Value::Number(n)) => {
                 n.as_i64() == Some(bot_id) || n.as_f64() == Some(bot_id as f64)
             }
@@ -254,7 +251,7 @@ mod tests {
     use std::collections::VecDeque;
     use std::sync::atomic::AtomicUsize;
 
-    // ---------- FakeAuth（对齐 Python 测试的 FakeAuth） ----------
+    // ---------- FakeAuth ----------
 
     struct FakeAuth {
         token: String,
@@ -392,7 +389,7 @@ mod tests {
         assert_eq!(extract_qq_forward("普通消息"), None);
         assert_eq!(extract_qq_forward("qq 没有感叹号"), None);
         assert_eq!(extract_qq_forward(""), None);
-        // Python 语义：仅前缀判断，`!qx` 的载荷是 "x"
+        // 仅做前缀判断，`!qx` 的载荷是 "x"
         assert_eq!(extract_qq_forward("!qx").as_deref(), Some("x"));
     }
 

@@ -3,7 +3,7 @@
 //! 写方向走官方 Forward Bot API（Bearer 静态 token），不需要这里；
 //! 读方向（`!q`、chatroom→游戏）仍需要普通用户 JWT。
 //!
-//! 对齐 Python 版 `chatroom_bridge/chatroom_auth.py`：
+//! 行为约定：
 //! - [`decode_jwt_payload`] 解析 JWT payload（不校验签名，只取 exp / user id）；
 //! - [`ChatroomAuth`] 维护 access_token，并把轮换出的 refresh_token 持久化到
 //!   [`StateStore`](crate::state::StateStore)；
@@ -21,10 +21,10 @@ use crate::state::StateStore;
 
 pub const REFRESH_ENDPOINT: &str = "/api/auth/refresh";
 
-/// 提前 5 分钟刷新（Python `REFRESH_MARGIN`）。
+/// 提前 5 分钟刷新。
 const REFRESH_MARGIN_SECS: i64 = 300;
 
-/// 当前 Unix 秒（Python `time.time()` 的整数近似，余量 300s 下误差可忽略）。
+/// 当前 Unix 秒（余量 300s 下误差可忽略）。
 fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -32,12 +32,12 @@ fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
-/// 按字符数截断（对齐 Python `body[:n]`）。
+/// 按字符数截断。
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 
-/// Python `str(data.get(key) or "")`：缺失/null/空串/0 → ""；数值按字符串转换；
+/// 缺失/null/空串/0 → ""；数值按字符串转换；
 /// 布尔与容器一律按空处理。
 fn json_str_field(data: &Value, key: &str) -> String {
     match data.get(key) {
@@ -47,7 +47,7 @@ fn json_str_field(data: &Value, key: &str) -> String {
     }
 }
 
-/// Python：按 `user_id`/`uid`/`id`/`sub` 顺序取第一个能当整数用的值；
+/// 按 `user_id`/`uid`/`id`/`sub` 顺序取第一个能当整数用的值；
 /// 整数直接用（浮点不算 int，跳过），纯数字字符串转 int，其余跳过。
 fn extract_user_id(payload: &Value) -> Option<i64> {
     for key in ["user_id", "uid", "id", "sub"] {
@@ -58,7 +58,7 @@ fn extract_user_id(payload: &Value) -> Option<i64> {
                 }
             }
             Some(Value::String(s)) => {
-                // Python str.isdigit()：空串为 False，负号/正号也不是数字
+                // 数字判定：非空且全为 ASCII 数字（负号/正号不算）
                 let parsed = if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) {
                     s.parse::<i64>().ok()
                 } else {
@@ -77,10 +77,9 @@ fn extract_user_id(payload: &Value) -> Option<i64> {
 /// 解析 JWT payload（不校验签名，只取 exp / user id）。
 ///
 /// 容错：任何失败（段数不足、base64 非法、JSON 非法）都返回 `{}`。
-/// 复刻 Python `urlsafe_b64decode`：先把 `-_` 翻译回 `+/`，补齐 `=` 到 4 的倍数，
+/// URL-safe base64 解码：先把 `-_` 翻译回 `+/`，补齐 `=` 到 4 的倍数，
 /// 再按标准字母表解码。
 pub fn decode_jwt_payload(token: &str) -> Value {
-    // Python: token.split(".")[1] —— 只要求至少两段
     let payload_b64 = match token.split('.').nth(1) {
         Some(p) => p,
         None => return json!({}),
@@ -93,7 +92,6 @@ pub fn decode_jwt_payload(token: &str) -> Value {
             other => other,
         })
         .collect();
-    // Python: payload_b64 += "=" * (-len(payload_b64) % 4)
     let padding = (4 - normalized.len() % 4) % 4;
     let padded = format!("{normalized}{}", "=".repeat(padding));
     let decoded = match base64::engine::general_purpose::STANDARD.decode(padded.as_bytes()) {
@@ -103,7 +101,7 @@ pub fn decode_jwt_payload(token: &str) -> Value {
     serde_json::from_slice(&decoded).unwrap_or_else(|_| json!({}))
 }
 
-/// 内存中的鉴权状态（Python 的各 `_xxx` 实例属性）。
+/// 内存中的鉴权状态。
 struct AuthState {
     /// 配置文件里的初始 refresh_token（回退用）。
     config_refresh_token: String,
@@ -124,7 +122,7 @@ pub struct ChatroomAuth {
 }
 
 impl ChatroomAuth {
-    /// 读超时 total 15s（对齐 Python `aiohttp.ClientTimeout(total=15)`）。
+    /// 读超时 total 15s。
     ///
     /// `refresh_token` 传配置文件里的初始值；`store` 提供时其持久化的
     /// refresh_token（若非空）优先于配置值。
@@ -138,14 +136,12 @@ impl ChatroomAuth {
             .build()?;
         let config_refresh_token = refresh_token.into();
         let persisted = store.as_ref().map(|s| s.refresh_token()).unwrap_or_default();
-        // Python: self._refresh_token = store.refresh_token if store and store.refresh_token else refresh_token
         let effective = if persisted.is_empty() {
             config_refresh_token.clone()
         } else {
             persisted
         };
         Ok(Self {
-            // Python: base_url.rstrip("/")
             base_url: base_url.into().trim_end_matches('/').to_string(),
             client,
             store,
@@ -219,7 +215,6 @@ impl ChatroomAuth {
     /// 200 → 缓存 access/exp/user_id，轮换出的 refresh_token 持久化到 store；
     /// 其余情况一律返回 false（reqwest 错误不外泄，只记日志）。
     pub async fn refresh(&self) -> bool {
-        // Python: token = self._refresh_token or self._config_refresh_token
         let token = {
             let state = self.lock();
             if state.refresh_token.is_empty() {
@@ -267,7 +262,6 @@ impl ChatroomAuth {
             return false;
         }
 
-        // Python: resp.json(content_type=None) —— 不校验 Content-Type
         let data: Value = match serde_json::from_str(&body) {
             Ok(data) => data,
             Err(_) => {
@@ -290,7 +284,6 @@ impl ChatroomAuth {
                 state.refresh_token = new_refresh.clone();
             }
 
-            // Python: float(exp) if isinstance(exp, (int, float)) else time.time() + 1800
             let payload = decode_jwt_payload(&access);
             state.expires_at = match payload.get("exp") {
                 Some(Value::Number(n)) => n
@@ -450,7 +443,7 @@ mod tests {
         assert_eq!(decode_jwt_payload("a.b"), json!({}));
         assert_eq!(decode_jwt_payload("a.@@@@.c"), json!({}));
         assert_eq!(decode_jwt_payload("a.b.c.d"), json!({}));
-        // payload 是合法 JSON 但不是对象 → 与 Python json.loads 一致，原样返回
+        // payload 是合法 JSON 但不是对象 → 原样返回
         let numeric = format!("x.{}", b64url(b"123"));
         assert_eq!(decode_jwt_payload(&numeric), json!(123));
     }
@@ -468,7 +461,7 @@ mod tests {
         assert_eq!(extract_user_id(&json!({"sub": "4"})), Some(4));
         // 纯数字字符串
         assert_eq!(extract_user_id(&json!({"user_id": "12"})), Some(12));
-        // 浮点不是 int（Python isinstance(5.5, int) == False）→ 跳到下一个 key
+        // 浮点不是 int→ 跳到下一个 key
         assert_eq!(extract_user_id(&json!({"user_id": 5.5, "sub": "6"})), Some(6));
         // 非数字字符串 / null → 跳过
         assert_eq!(
@@ -553,7 +546,7 @@ mod tests {
         assert_eq!(mock.tokens().len(), 1);
         assert!(auth.has_refresh_token());
 
-        // 与 Python 一致：刷新从未成功过 → 内存值仍等于配置值 → 不触发回退重试
+        // 刷新从未成功过 → 内存值仍等于配置值 → 不触发回退重试
         // （第二个 ensure 同样只发一个请求，共 2 个；真正的回退路径见 fallback 用例）
         mock.push_raw(500, "boom");
         assert!(!auth.ensure_token().await);
@@ -692,7 +685,7 @@ mod tests {
         mock.push_json(json!({"refresh_token": "rt-next"}));
         assert!(!auth.refresh().await);
         assert_eq!(auth.access_token(), "");
-        // access_token 为空/数字 0 → Python `or ""` 语义按空处理
+        // access_token 为空 / 数字 0 → 按空处理
         mock.push_json(json!({"access_token": 0}));
         assert!(!auth.refresh().await);
         // 200 但响应不是 JSON → false

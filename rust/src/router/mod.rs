@@ -2,7 +2,6 @@
 //! 由注册的 [`CommandHandler`] 依次认领。
 //!
 //! 本阶段注册的 handler：斜杠命令（`/chatroom` `/server`）、`!q` 中继、`!snap` 快照通知，
-//! 行为与 Python 版逐一对齐。
 //!
 //! 下一阶段 agent 技能（`!mc` / `!wiki` / `!tmc`）各自实现 [`CommandHandler`] 后
 //! `register` 一行即可接入；智能路由（LLM 选取 handler）只需在
@@ -98,7 +97,7 @@ pub struct CommandInfo {
 /// 命令处理器。返回 `true` 表示消息被消费（QQ 端语义：不再进入转发流水线）。
 ///
 /// 游戏与 chatroom 端的派发不采用消费语义：原始消息仍按既有行为
-/// 广播/转发，handler 只负责自己那部分中继动作（与 Python 版行为一致）。
+/// 广播/转发，handler 只负责自己那部分中继动作。
 #[async_trait]
 pub trait CommandHandler: Send + Sync {
     fn info(&self) -> CommandInfo;
@@ -138,7 +137,7 @@ impl CommandRouter {
     }
 }
 
-/// `!<prefix><payload>` 风格匹配助手：整个前缀大小写不敏感（与 Python 版
+/// `!<prefix><payload>` 风格匹配助手：整个前缀大小写不敏感（
 /// `extract_qq_forward` 对齐，`!Q` 同样命中），返回去掉前缀并 trim 的载荷。
 /// 多字节字符开头时安全退回 None（不做边界切割）。
 pub fn match_prefix<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {

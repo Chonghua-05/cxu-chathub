@@ -24,7 +24,7 @@ vi config.json      # 填 chatroom.forward_token / chatbridge.* / onebot.access_
 - `chatroom.forward_token` —— chatroom 官方给 bot 的静态 token（唯一必需）
 - `chatbridge.password`、`chatbridge.aes_key` —— 服务端分配（可从旧旧框架插件配置搬）
 - `onebot.access_token` —— 与 NapCat 客户端的 token 一致
-- `commands.status_image` —— `true` 表示 `/server` 发图（构建时需带 Chromium，镜像大约 1GB）
+- `commands.status_image` —— `true` 表示 `/server` 发图（渲染已内置，无需额外镜像/系统依赖）
 
 ## 2. 构建并启动
 
@@ -38,7 +38,7 @@ docker compose logs -f --tail 50
 
 - 端口映射写成 `127.0.0.1:6199:6199` —— 只绑回环，公网不可达。
 - `config.json` 以 **只读** 挂载；`./data` 为可写卷，存放 `state.json`。
-- `mem_limit: 1200m` / `shm_size: 512m`：给 Chromium 渲染留余量；容器空闲常驻约 40MB。
+- `mem_limit: 256m`：状态图渲染为纯 Rust（无 Chromium），常驻很小；不再需要 `shm_size`。
 
 ## 3. 切流顺序（避免重复转发）
 
@@ -86,8 +86,8 @@ curl -s http://127.0.0.1:6199/healthz                  # 期望 status=ok + oneb
 docker compose logs -f --tail 50 chatroom-bridge-rust
 ```
 
-- `rust/Dockerfile` 为多阶段构建；`STATUS_IMAGE=true` 变体装 Chromium + 中文字体
-  （镜像约 400MB，无 Chromium 约 80MB）。Rust 进程自身常驻约 10MB 级。
+- `rust/Dockerfile` 为多阶段构建；仅装 Noto CJK 中文字体（无 Chromium，镜像约 80MB）。
+  Rust 进程自身常驻约 10MB 级。
 - `./data` 卷两边共用，切回 Python 版也无需迁移数据；切换期间去重表与读游标不丢。
 - Rust 版额外监听 **HTTP API `127.0.0.1:8199`**（配置段 `api`，默认开启在回环上；
   Python 版无此端口）。容器内已监听，compose 未映射该端口——需要给 Web UI / 其他
@@ -103,7 +103,7 @@ curl -s http://127.0.0.1:6199/healthz
 |------|----------|
 | `/healthz` 里 `onebot_connected: false` | NapCat 里「NapCat 客户端」客户端是否 `enable`、token 是否一致 |
 | 群消息没进 chatroom | 日志里 `转发到 chatroom 失败` 的 HTTP 码；若返回 **200 + HTML** 说明服务端接口路径已变（前端 SPA 兜底），不是 token 问题 |
-| `/server` 不出图 | `commands.status_image` 是否为 true、镜像是否带 Chromium；渲染失败会自动回退文本 |
+| `/server` 不出图 | `commands.status_image` 是否为 true、镜像是否装了中文字体（`fonts-noto-cjk`）；渲染失败会自动回退文本 |
 | 启动即退出 | `config.json` 的 JSON 语法；`docker compose logs` 里的 `ConfigError` |
 | 端口占用 | `docker ps --filter publish=6199` —— 大概率是旧框架还在跑 |
 

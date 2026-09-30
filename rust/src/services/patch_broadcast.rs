@@ -1,5 +1,5 @@
 //! Mojang 版本更新播报（roadmap v0.5）：轮询官方补丁说明 feed，检测到新版本后
-//! 经 LLM 翻译正文、Chromium 渲染「译后 / 译前」两张长图，打包成合并转发
+//! 经 LLM 翻译正文，渲染「译后 / 译前」两张黑底白字长图，打包成合并转发
 //! 聊天记录发到 `chatroom.group_ids` 白名单群。
 //!
 //! 数据源与判断逻辑：
@@ -12,8 +12,8 @@
 //! - 播报状态持久化在 `state.json` 的 `announced_patches`（保留最近 50 条）。
 //!
 //! 降级链（任何一环缺失都发得出去，只是内容缩水）：
-//! LLM 未配置 / 翻译失败 → 只发原文；`status-image` feature 未启用或无
-//! Chromium → 长图降级为纯文本节点；QQ 未连接 / 无白名单群 → 记日志下轮重试。
+//! LLM 未配置 / 翻译失败 → 只发原文；长图渲染失败 → 降级为纯文本节点；
+//! QQ 未连接 / 无白名单群 → 记日志下轮重试。
 //!
 //! 原文链接：正文 feed 无单篇直链，minecraft.net 文章 slug 不可稳定推导，
 //! 统一给官方补丁说明总览页 [`PATCH_NOTES_PAGE`]。
@@ -28,6 +28,7 @@ use tracing::{error, info, warn};
 
 use crate::agent::llm::LlmClient;
 use crate::config::PatchBroadcastConfig;
+use crate::services::status_render::Block;
 use crate::state::StateStore;
 use crate::subsystem::Subsystem;
 
@@ -62,20 +63,21 @@ pub struct FeedEntry {
     pub content_path: String,
 }
 
-/// 长图渲染器抽象：真实实现走 `status_render::render_html_png`（常驻 Chromium，
-/// `status-image` feature），测试用假渲染器。返回 None = 渲染不可用（降级文本）。
+/// 长图渲染器抽象：返回 None = 渲染不可用（降级为纯文本节点，不丢消息）。
 #[async_trait]
 pub trait PatchRenderer: Send + Sync {
-    async fn render(&self, html: &str) -> Option<Vec<u8>>;
+    /// `title` 为长图顶栏标题，`html` 为正文（Mojang 原文或 LLM 译文）。
+    async fn render(&self, title: &str, html: &str) -> Option<Vec<u8>>;
 }
 
-/// 真实渲染器：复用 `/server` 状态图的 Chromium 池。
-pub struct ChromiumPatchRenderer;
+/// 真实渲染器：HTML 粗剥离成文本块 → 复用 /server 的纯 Rust 渲染管线出黑底白字长图。
+pub struct BulletinRenderer;
 
 #[async_trait]
-impl PatchRenderer for ChromiumPatchRenderer {
-    async fn render(&self, html: &str) -> Option<Vec<u8>> {
-        super::status_render::render_html_png(html).await.ok()
+impl PatchRenderer for BulletinRenderer {
+    async fn render(&self, title: &str, html: &str) -> Option<Vec<u8>> {
+        let blocks = strip_html_blocks(html);
+        crate::services::status_render::render_bulletin_png(title, &blocks).ok()
     }
 }
 
@@ -316,7 +318,7 @@ impl PatchBroadcaster {
         }
     }
 
-    /// HTML → 图（有渲染器）或纯文本摘录（无渲染器）；正文缺失 → Skip。
+    /// HTML → 图（有渲染器）或纯文本摘录（无渲染器 / 渲染失败）；正文缺失 → Skip。
     /// `page_title` 用作长图顶栏。
     async fn render_or_text(
         &self,
@@ -327,15 +329,15 @@ impl PatchBroadcaster {
         let Some(html) = html else {
             return NodeOrSkip::Skip;
         };
+        let blocks = strip_html_blocks(html);
         if let Some(renderer) = &self.renderer {
-            let page = render_page(page_title, html);
-            if let Some(png) = renderer.render(&page).await {
+            if let Some(png) = renderer.render(page_title, html).await {
                 return NodeOrSkip::Image(png);
             }
-            warn!("长图渲染不可用，版本更新播报降级为纯文本节点");
+            warn!("长图渲染失败，版本更新播报降级为纯文本节点");
         }
         let mut text = format!("{text_header}\n");
-        text.push_str(&strip_html(html));
+        text.push_str(&blocks_to_text(&blocks));
         truncate_chars(&mut text, TEXT_FALLBACK_MAX_CHARS);
         NodeOrSkip::Text(text)
     }
@@ -393,70 +395,107 @@ struct EntryBody {
     body: String,
 }
 
-/// 更新说明长图的静态外框：标题栏 + 正文容器（正文 HTML 由 feed 提供）。
-fn render_page(title: &str, body_html: &str) -> String {
-    // 标题是外部数据，进 HTML 前转义（正文本身是 HTML，不转义）
-    let title = html_escape(title);
-    format!(
-        r#"<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-body {{ margin: 0; width: 900px; background: #f6f7f9; font-family: "Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif; color: #1c1e21; }}
-.header {{ background: #3a7d44; color: #fff; padding: 18px 28px; font-size: 24px; font-weight: 700; }}
-.content {{ padding: 20px 28px 32px; font-size: 16px; line-height: 1.7; }}
-.content h1 {{ font-size: 22px; border-bottom: 2px solid #d8dbe0; padding-bottom: 6px; }}
-.content h2 {{ font-size: 19px; margin-top: 22px; }}
-.content ul {{ padding-left: 24px; }}
-.content a {{ color: #2a6ac8; word-break: break-all; }}
-.footnote {{ padding: 0 28px 26px; color: #8a8f99; font-size: 13px; }}
-</style></head><body>
-<div class="header">{title}</div>
-<div class="content">{body_html}</div>
-<div class="footnote">由 cxu-chathub 自动翻译/渲染 · 内容来自 Mojang 官方补丁说明</div>
-</body></html>"#
-    )
-}
+/// HTML 粗剥离成文本块（不写完整解析器、不引解析库）：
+/// h1~h6 → Title，p → Paragraph，li → Item，br → 空白；
+/// a/strong/em/code/span 等只去标签保留文字；其余标签一并剥壳。
+fn strip_html_blocks(html: &str) -> Vec<Block> {
+    #[derive(Clone, Copy)]
+    enum Kind {
+        Title,
+        Para,
+        Item,
+    }
+    fn flush(out: &mut Vec<Block>, cur: &mut String, kind: &mut Option<Kind>) {
+        let text = normalize_ws(cur);
+        if !text.is_empty() {
+            out.push(match kind.unwrap_or(Kind::Para) {
+                Kind::Title => Block::Title(text),
+                Kind::Para => Block::Paragraph(text),
+                Kind::Item => Block::Item(text),
+            });
+        }
+        cur.clear();
+        *kind = None;
+    }
 
-/// 最小 HTML → 纯文本：块级标签换行、剥其余标签、解常见实体、压掉多余空行。
-fn strip_html(html: &str) -> String {
-    let without_blocks = html
-        .replace("<br>", "\n")
-        .replace("<br/>", "\n")
-        .replace("<br />", "\n")
-        .replace("</p>", "\n")
-        .replace("</li>", "\n")
-        .replace("</h1>", "\n")
-        .replace("</h2>", "\n")
-        .replace("</h3>", "\n")
-        .replace("</h4>", "\n")
-        .replace("</h5>", "\n")
-        .replace("</h6>", "\n")
-        .replace("</tr>", "\n");
-    let mut out = String::with_capacity(without_blocks.len());
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut kind: Option<Kind> = None;
     let mut in_tag = false;
-    for ch in without_blocks.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            ch if !in_tag => out.push(ch),
-            _ => {}
+    let mut tag = String::new();
+    for ch in html.chars() {
+        if in_tag {
+            if ch == '>' {
+                in_tag = false;
+                let raw = tag.trim();
+                let closing = raw.starts_with('/');
+                let base = raw
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_end_matches('/')
+                    .to_ascii_lowercase();
+                match base.as_str() {
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                        flush(&mut out, &mut cur, &mut kind);
+                        if !closing {
+                            kind = Some(Kind::Title);
+                        }
+                    }
+                    "p" => {
+                        flush(&mut out, &mut cur, &mut kind);
+                        if !closing {
+                            kind = Some(Kind::Para);
+                        }
+                    }
+                    "li" => {
+                        flush(&mut out, &mut cur, &mut kind);
+                        if !closing {
+                            kind = Some(Kind::Item);
+                        }
+                    }
+                    "br" => cur.push(' '),
+                    _ => {}
+                }
+                tag.clear();
+            } else {
+                tag.push(ch);
+            }
+        } else if ch == '<' {
+            in_tag = true;
+            tag.clear();
+        } else {
+            cur.push(ch);
         }
     }
-    let decoded = out
+    flush(&mut out, &mut cur, &mut kind);
+    out
+}
+
+/// 解常见实体 + 折叠空白。
+fn normalize_ws(text: &str) -> String {
+    let decoded = text
+        .replace("&nbsp;", " ")
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&#39;", "'")
-        .replace("&nbsp;", " ");
-    // 压掉所有空行与行首尾空白（段落分隔由单个换行承担）
-    let mut lines: Vec<&str> = Vec::new();
-    for line in decoded.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        lines.push(line);
-    }
-    lines.join("\n").trim().to_string()
+        .replace("&#x27;", "'");
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// 文本降级用：块拼成纯文本。
+fn blocks_to_text(blocks: &[Block]) -> String {
+    blocks
+        .iter()
+        .map(|b| match b {
+            Block::Title(s) | Block::Paragraph(s) => s.clone(),
+            Block::Item(s) => format!("• {s}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn truncate_chars(text: &mut String, max_chars: usize) {
@@ -469,14 +508,6 @@ fn truncate_chars(text: &mut String, max_chars: usize) {
 /// 剥 UTF-8 BOM（Mojang 部分端点的响应带 BOM，serde_json 不容忍）。
 fn strip_bom(raw: &str) -> &str {
     raw.strip_prefix('\u{FEFF}').unwrap_or(raw)
-}
-
-/// 最小 HTML 转义（外部文本进 HTML 模板用）。
-fn html_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 fn preview(raw: &str) -> String {
@@ -630,7 +661,7 @@ mod tests {
 
     #[async_trait]
     impl PatchRenderer for FakeRenderer {
-        async fn render(&self, html: &str) -> Option<Vec<u8>> {
+        async fn render(&self, _title: &str, html: &str) -> Option<Vec<u8>> {
             self.pages.lock().unwrap().push(html.to_string());
             Some(vec![1, 2, 3])
         }
@@ -917,15 +948,18 @@ mod tests {
         assert_eq!(make("https://host.example.com"), "https://host.example.com");
     }
 
-    /// strip_html：块级标签换行、剥内联标签、解实体、压空行。
+    /// HTML 剥离：块分类（标题/段落/列表）+ 去内联标签 + 解实体。
     #[test]
-    fn strip_html_produces_readable_text() {
-        let html = "<p>第一段</p>\n<p>第二 <b>加粗</b> 与 <a href=\"x\">链接</a>&amp;实体</p><ul><li>条目一</li><li>条目二</li></ul>";
-        let text = strip_html(html);
-        assert!(text.contains("第一段\n第二 加粗 与 链接&实体"));
-        assert!(text.contains("条目一\n条目二"));
+    fn strip_html_blocks_classifies_and_strips() {
+        let html = "<h1>标题</h1><p>第一段</p>\n<p>第二 <b>加粗</b> 与 <a href=\"x\">链接</a>&amp;实体</p><ul><li>条目一</li><li>条目二</li></ul>";
+        let blocks = strip_html_blocks(html);
+        assert!(matches!(&blocks[0], Block::Title(t) if t == "标题"));
+        assert!(matches!(&blocks[1], Block::Paragraph(t) if t == "第一段"));
+        assert!(matches!(&blocks[3], Block::Item(t) if t == "条目一"));
+        let text = blocks_to_text(&blocks);
+        assert!(text.contains("第二 加粗 与 链接&实体"));
+        assert!(text.contains("• 条目一"));
         assert!(!text.contains('<'));
-        assert!(!text.contains("  \n"));
     }
 
     /// BOM 容忍：feed / 正文都带 BOM 也能解析。

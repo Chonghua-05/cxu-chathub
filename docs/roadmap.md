@@ -12,7 +12,7 @@
       线上启用 `agent.skills` / `agent.llm`（改配置须 `docker restart`），LLM 就位后
       跑 `rust/eval/mc-source.json` 与评测 `--llm` 模式核对，并在测试群灰度验证智能路由。
 - [ ] **v0.5 线上启用与验证**：代码侧已完成（见下方 v0.5 清单）——`config.json`
-      开 `patch_broadcast.enabled` + 配 `agent.llm` + 带 status-image 的镜像，
+      开 `patch_broadcast.enabled` + 配 `agent.llm`（状态图/长图渲染已内置），
       测试群验证合并转发的实际显示效果（本机无 NapCat，wire 格式仅单测覆盖）。
 - [ ] **更远**：发布到包管理器、插件化。
 
@@ -33,14 +33,14 @@
 
 - [x] 行为对齐：三端互通、群命令（`/chatroom` `/server`）、去重 / 游标 / refresh token
       持久化逐一对齐 Python 版
-- [x] 部署件：`rust/Dockerfile` 多阶段构建（`STATUS_IMAGE` 可选 Chromium 变体）+
+- [x] 部署件：`rust/Dockerfile` 多阶段构建 +
       `docker-compose.yml` 的 `rust` profile（与 Python 版二选一，6199 端口冲突）
 - [x] 切流验收：`state.json` 与 Python 版互相兼容（`./data` 目录共用），切流后
       去重表与读游标不丢
 - [x] 架构预留：agent 能力扩展点固化（`router::CommandHandler` / `agent::DocumentSource`），
       设计见 [`docs/agent-design.md`](agent-design.md)，技能实现属 v0.3
-- [x] 性能优化：`/server` 状态图渲染改为常驻 Chromium 复用（+ 背景重编码缓存、
-      去掉多余导航），端到端 ~9s → ~1s 级；已随 2026-09-13 切流上线（源码 `d841d7b`）
+- [x] 性能优化：`/server` 状态图渲染改为常驻复用（当时为 Chromium；v0.6 已整体替换
+      为纯 Rust 渲染，见下），端到端 ~9s → ~1s 级；已随 2026-09-13 切流上线（源码 `d841d7b`）
 
 ## v0.3 —— Agent 能力（顺延，原 v0.2 项）
 
@@ -96,9 +96,8 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
       播报状态持久化在 `state.json` 的 `announced_patches`（保留 50 条）
 - [x] **翻译**：复用 `agent.llm`，提示词强制保留 HTML 结构、术语用官方中文译名；
       未配置 / 失败 → 只发原文（不阻塞播报）
-- [x] **截图**：译后 / 译前两张长图，复用 `status_render` 常驻 Chromium
-      （新增通用 `render_html_png`，900px 宽，与状态图共用浏览器池）；需
-      `status-image` feature，不可用 → 降级为纯文本摘录节点
+- [x] **长图**：译后 / 译前两张长图，纯 Rust 渲染（cosmic-text 整形 → SVG → resvg，
+      黑底白字，900px 宽）；HTML 粗剥离为文本块，渲染失败 → 降级为纯文本摘录节点
 - [x] **打包**：合并转发聊天记录（`send_group_forward_msg`，节点 = 标题信息 /
       译后 / 原文 / 官方链接，节点昵称区分内容）
 - [x] **发送**：发到 `chatroom.group_ids` 白名单群（复用现有白名单，零新增配置）；

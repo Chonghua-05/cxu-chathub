@@ -53,7 +53,7 @@
 |------|------|------|------|
 | `group_allow_all` | bool | `true` | `true` 时所有群可用；`false` 时仅 `allow_from` |
 | `allow_from` | int[] | `[]` | 允许使用命令的群号 |
-| `status_image` | bool | `false` | `/server` 是否发图（需构建镜像时 `STATUS_IMAGE=true`） |
+| `status_image` | bool | `false` | `/server` 是否发图（渲染已内置，无需构建开关） |
 
 ## `api` —— HTTP API（Rust 版，Web UI / 外部站点调用）
 
@@ -99,8 +99,8 @@
 
 ## `patch_broadcast` —— Mojang 版本更新播报（v0.5）
 
-轮询官方补丁说明 feed，检测到 Java 版新版本后：LLM 翻译正文 → Chromium 渲染
-「译后 / 译前」两张长图 → 打包成合并转发聊天记录，发到 `chatroom.group_ids`
+轮询官方补丁说明 feed，检测到 Java 版新版本后：LLM 翻译正文 → 纯 Rust 渲染
+「译后 / 译前」两张黑底白字长图 → 打包成合并转发聊天记录，发到 `chatroom.group_ids`
 白名单群（复用现有白名单，无独立目标群配置）。实现见
 `services/patch_broadcast.rs`；作为 `patch-broadcast` 子服务接入统一健康检查。
 
@@ -112,7 +112,7 @@
 
 行为要点：首次启用只记录当前最新版本为基线（不播报历史）；每条播报在
 `state.json` 的 `announced_patches` 标记（保留 50 条），发送失败不标记、
-下轮重试；长图需构建时带 `status-image` feature，否则自动降级纯文本节点。
+下轮重试；长图渲染失败时自动降级为纯文本节点。
 
 ## 顶层
 

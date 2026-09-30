@@ -8,7 +8,7 @@ asyncio 服务，跑在云主机 Docker 上，与旧框架和 AI 服务完全解
 
 - 仓库名：`cxu-chathub`
 - Python 包名：`chatroom_bridge`，容器名 `chatroom-bridge`（暂未改名，避免打断线上部署）
-- 版本：`0.2.0`（Rust 重写；Python 版已下线）
+- 版本：`0.6.0`（Rust 重写；Python 版已下线）
 
 ---
 
@@ -104,7 +104,7 @@ NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `d
 | `adapters/chatbridge.rs` | ChatBridge 客户端（4 字节长度前缀 + AES-CBC；与 Python 版逐字节对拍） |
 | `services/forwarder.rs` | QQ 群 → chatroom 流水线（去重 / 图片压缩 / 引用回填） |
 | `services/player_events.rs` | 玩家上下线推送（ChatBridge 系统广播 + 可配置正则，事件驱动不丢条目） |
-| `services/commands.rs` / `status_render.rs` | `/chatroom` `/server` 命令与状态图（Chromium 渲染由 `status-image` feature 门控，自动回退文本） |
+| `services/commands.rs` / `status_render.rs` | `/chatroom` `/server` 命令与状态图（纯 Rust：cosmic-text 整形 → SVG → resvg 光栅化，失败自动回退文本） |
 | `router/` | **统一消息路由**：三端入站汇入 `CommandRouter`，`/命令`、`!q`、`!snap` 均为注册其上的 `CommandHandler` |
 | `agent/` | **agent 能力（已实现）**：命令与文档源全部由 `agent.skills` 配置注册——`LocalDocSource`（本地目录，文件:行号出处）+ `MediaWikiSource`（云端 api.php）+ 通用 `DocQuerySkill`（LLM 整理、失败自动降级摘录）；设计见 [`docs/agent-design.md`](docs/agent-design.md) |
 | `api/` | **独立 HTTP API**（默认 `127.0.0.1:8199`）：状态/近期消息读接口 + token 保护的 `/api/relay` 写接口，带 CORS——Web UI 与其他站点调用的入口（见 [`docs/api-design.md`](docs/api-design.md)） |
@@ -112,10 +112,10 @@ NapCat 与数据目录零改动。Python 版保留至切流验收完成（见 `d
 
 ```bash
 cd rust
-cargo test                 # 175 个测试（单元 + WS 集成 + e2e 冒烟）
+cargo test                 # 174 个测试（单元 + WS 集成 + e2e 冒烟）
 cargo build --release
 ./target/release/chatroom-bridge --config ./config.json
-# 状态图渲染变体：cargo build --release --features status-image（需系统 Chromium）
+# 状态图渲染已内置（纯 Rust），无需额外 feature / 系统依赖
 ```
 
 Agent 能力（`!mc` / `!wiki` / `!tmc`，下一阶段）的扩展点设计见

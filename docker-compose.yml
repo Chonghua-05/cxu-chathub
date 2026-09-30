@@ -38,9 +38,6 @@ services:
     build:
       context: .
       dockerfile: rust/Dockerfile
-      args:
-        # /server 状态图需要 Chromium + 中文字体（带 Chromium 镜像约 400MB；磁盘紧张可改 "false"）
-        STATUS_IMAGE: "true"
     image: cxu-chathub:rust
     container_name: chatroom-bridge-rust
     restart: unless-stopped
@@ -53,9 +50,8 @@ services:
     volumes:
       - ./config.json:/app/config.json:ro
       - ./data:/data
-    # 与 Python 版相同的配额（Chromium 渲染需要）；Rust 版自身常驻更小（~10MB 级）
-    mem_limit: 1200m
-    shm_size: 512m
+    # 状态图渲染已改纯 Rust（无 Chromium），常驻内存大幅下降；先给 256M，稳定后再压
+    mem_limit: 256m
     environment:
       - TZ=Asia/Shanghai
     logging:

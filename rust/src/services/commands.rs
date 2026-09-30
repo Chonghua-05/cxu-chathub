@@ -701,7 +701,7 @@ mod tests {
     #[tokio::test]
     async fn status_image_falls_back_to_text_when_render_unavailable() {
         // 数据不是对象时渲染必返回 None（对应 Python _render_status 的 isinstance 检查），
-        // 因此无论是否启用 status-image / 是否有浏览器，都确定性地走文本回退。
+        // 因此渲染不可用（非法数据 / 字体缺失 / SVG 失败）时确定性地走文本回退。
         let (base, _mock) = spawn_mock(json!([1, 2, 3])).await;
         let service = make_service(&base, true, Vec::new(), true);
 

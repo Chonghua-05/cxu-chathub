@@ -38,7 +38,7 @@ use crate::router::{CommandHandler, CommandInfo, CommandRouter, Hub};
 use crate::services::commands::CommandService;
 use crate::services::forwarder::{ChatroomForwarder, ForwarderStats};
 use crate::services::patch_broadcast::{
-    ChromiumPatchRenderer, PatchBroadcastSubsystem, PatchBroadcaster, PatchSendSink,
+    BulletinRenderer, PatchBroadcastSubsystem, PatchBroadcaster, PatchSendSink,
 };
 use crate::services::player_events::PlayerEventDetector;
 use crate::state::StateStore;
@@ -324,13 +324,13 @@ impl BridgeService {
                     Arc::new(PatchBroadcaster::new(
                         cfg.patch_broadcast.clone(),
                         state.clone(),
-                        // 播报复用 agent.llm（未配置时只发原文）；渲染复用 /server 的 Chromium 池
+                        // 播报复用 agent.llm（未配置时只发原文）；长图复用 /server 的纯 Rust 渲染管线
                         cfg.agent
                             .llm
                             .as_ref()
                             .filter(|llm| !llm.api_url.is_empty())
                             .and_then(|llm| LlmClient::new(llm.clone()).ok()),
-                        Some(Arc::new(ChromiumPatchRenderer)),
+                        Some(Arc::new(BulletinRenderer)),
                         Arc::new(ServicePatchSink(weak.clone())),
                         cfg.onebot.self_id,
                     )),

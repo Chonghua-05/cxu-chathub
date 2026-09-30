@@ -306,9 +306,8 @@ pub struct AgentConfig {
 }
 
 /// Mojang 版本更新播报（v0.5）：轮询官方补丁说明 feed，检测到新版本即经
-/// LLM 翻译 + Chromium 截图，以合并转发消息发到 `chatroom.group_ids` 白名单群。
-/// 实现见 `services/patch_broadcast.rs`；截图需 `status-image` feature，
-/// LLM / 截图不可用时自动降级为纯文本节点。
+/// LLM 翻译，以合并转发消息发到 `chatroom.group_ids` 白名单群。
+/// 实现见 `services/patch_broadcast.rs`；长图渲染随 /server 迁移下线，暂降级为纯文本节点。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct PatchBroadcastConfig {

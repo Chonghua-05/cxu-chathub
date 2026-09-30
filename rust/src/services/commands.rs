@@ -11,9 +11,9 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::services::{clean_player_name, py_get_str, python_str, truthy};
+
 /// 默认地址仅作示例，实际部署请通过 config.json 的 chatroom.* 覆盖
-pub const DEFAULT_VOICE_API: &str =
-    "https://chatroom.example.com/api/voice/qqbot/get_voice_channel_people";
 pub const DEFAULT_STATUS_API: &str = "https://status.example.com/api/qqbot/status";
 
 /// Python `DEFAULT_SERVER_ADDRESSES: list[tuple[str, str]]`（两条）——照抄
@@ -59,51 +59,6 @@ pub fn parse_command(text: &str) -> Option<(String, String)> {
         return None;
     }
     Some((name, rest.trim().to_string()))
-}
-
-/// Python 风格标量转字符串（str(v) / f-string 插值）：None → "None"、
-/// True/False 保留 Python 大写、字符串原样、数字与 serde 表示一致。
-fn python_str(value: &Value) -> String {
-    match value {
-        Value::Null => "None".to_string(),
-        Value::Bool(b) => {
-            if *b {
-                "True".to_string()
-            } else {
-                "False".to_string()
-            }
-        }
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-/// dict.get(key, default) + f-string：键缺失用 default，存在则 str(v)。
-fn py_get_str(obj: &Value, key: &str, default: &str) -> String {
-    match obj.get(key) {
-        Some(v) => python_str(v),
-        None => default.to_string(),
-    }
-}
-
-/// Python truthiness（bool(v)）。
-fn truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Array(a)) => !a.is_empty(),
-        Some(Value::Object(o)) => !o.is_empty(),
-    }
-}
-
-/// Python `str(p).lstrip("• ").strip()`：去掉行首的 • 与空格，再整段 trim。
-fn clean_player_name(player: &Value) -> String {
-    python_str(player)
-        .trim_start_matches(['•', ' '])
-        .trim()
-        .to_string()
 }
 
 /// 格式化语音频道在线人员（与旧插件行为一致）。
@@ -219,23 +174,6 @@ pub fn format_status(data: &Value) -> String {
     }
 
     lines.join("\n").trim().to_string()
-}
-
-/// 每命令计数快照（/status 计入 server）。
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct CommandStats {
-    pub chatroom: u64,
-    pub server: u64,
-}
-
-impl CommandStats {
-    /// 从 [`CommandService::stats`] 的计数表提取快照。
-    pub fn from_map(map: &HashMap<String, u64>) -> Self {
-        Self {
-            chatroom: map.get("chatroom").copied().unwrap_or(0),
-            server: map.get("server").copied().unwrap_or(0),
-        }
-    }
 }
 
 /// 命令分发：/chatroom、/server（/status 为兼容别名）。
@@ -617,10 +555,6 @@ mod tests {
         let stats = service.stats();
         assert_eq!(stats.get("server"), Some(&2));
         assert_eq!(stats.get("chatroom"), Some(&1));
-        assert_eq!(
-            CommandStats::from_map(&stats),
-            CommandStats { chatroom: 1, server: 2 }
-        );
     }
 
     #[tokio::test]

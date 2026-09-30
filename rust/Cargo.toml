@@ -13,8 +13,6 @@ path = "src/lib.rs"
 name = "chatroom-bridge"
 path = "src/main.rs"
 
-[features]
-default = []
 # /server 状态图渲染已内置（纯 Rust：cosmic-text + resvg），无需 feature 开关。
 
 [dependencies]

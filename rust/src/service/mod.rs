@@ -99,7 +99,7 @@ impl RecentLog {
                 .unwrap_or(0),
             source: source.to_string(),
             from: from.to_string(),
-            text: truncate_chars(text, RECENT_MESSAGE_TEXT_MAX),
+            text: truncate_inline(text, RECENT_MESSAGE_TEXT_MAX),
         });
         while inner.items.len() > self.cap {
             inner.items.pop_front();
@@ -124,7 +124,8 @@ impl RecentLog {
     }
 }
 
-fn truncate_chars(s: &str, max: usize) -> String {
+/// 单行截断（不加省略号）；供近期消息缓冲与日志预览用。
+pub(crate) fn truncate_inline(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
 

@@ -50,17 +50,17 @@ const MAX_BURST_ANNOUNCEMENTS: usize = 10;
 
 /// feed 列表条目（只取播报需要的字段；列表最新在前）。
 #[derive(Debug, Clone, Deserialize)]
-pub struct FeedEntry {
-    pub id: String,
-    pub version: String,
-    pub title: String,
+struct FeedEntry {
+    id: String,
+    version: String,
+    title: String,
     #[serde(rename = "type")]
-    pub kind: String,
+    kind: String,
     #[serde(default)]
-    pub date: String,
+    date: String,
     /// 相对 feed 目录的正文路径（如 `javaPatchNotes/xx.json`）
     #[serde(rename = "contentPath")]
-    pub content_path: String,
+    content_path: String,
 }
 
 /// 长图渲染器抽象：返回 None = 渲染不可用（降级为纯文本节点，不丢消息）。
@@ -222,7 +222,8 @@ impl PatchBroadcaster {
     }
 
     async fn fetch_body(&self, entry: &FeedEntry) -> Option<String> {
-        let url = format!("{}/{}", self.feed_base_url().trim_end_matches('/'), entry.content_path);        let response = match self.client.get(&url).send().await {
+        let url = format!("{}/{}", self.feed_base_url().trim_end_matches('/'), entry.content_path);
+        let response = match self.client.get(&url).send().await {
             Ok(response) => response,
             Err(err) => {
                 warn!(id = %entry.id, url = %url, error = %err, "更新正文拉取失败");

@@ -5,7 +5,7 @@
 //! 图标用 SVG 基本元素；背景图先解码 → 面板区域做局部高斯模糊 → resvg 光栅化
 //! （`resvg::render`）。产物仍是 PNG 字节，交给上层 base64 发图。
 //!
-//! 视觉参数全部照抄 `status.html` 的 CSS（见文件内常量注释），目标是与
+//! 视觉常量照抄旧 `status.html`（见 git 历史 bff03e2）的 CSS，目标是与
 //! Chromium 渲染“肉眼接近”。
 
 use std::sync::{Mutex, OnceLock};
@@ -17,19 +17,16 @@ use cosmic_text::{
 };
 use serde_json::Value;
 
+use crate::services::commands::DEFAULT_SERVER_ADDRESSES;
+use crate::services::{clean_player_name, py_get_str, truthy};
+
 /// 状态图背景（原图，不再重编码）
-pub const BACKGROUND_JPG: &[u8] = include_bytes!("templates/status-bg.jpg");
+const BACKGROUND_JPG: &[u8] = include_bytes!("templates/status-bg.jpg");
 /// 状态图标（预渲染 PNG，绿色对勾 / 红色叉）
-pub const ICON_OK_PNG: &[u8] = include_bytes!("../../assets/icons/ok.png");
-pub const ICON_FAIL_PNG: &[u8] = include_bytes!("../../assets/icons/fail.png");
+const ICON_OK_PNG: &[u8] = include_bytes!("../../assets/icons/ok.png");
+const ICON_FAIL_PNG: &[u8] = include_bytes!("../../assets/icons/fail.png");
 
-/// Python 默认 `ADDRESSES`（与 commands::DEFAULT_SERVER_ADDRESSES 相同）
-pub const DEFAULT_ADDRESSES: [(&str, &str); 2] = [
-    ("主IP", "game.example.com"),
-    ("备用地址", "backup.example.com:25565"),
-];
-
-// ---------------- 视觉常量（照抄 templates/status.html） ----------------
+// ---------------- 视觉常量（照抄旧 status.html，见 git 历史 bff03e2） ----------------
 
 const FONT_FAMILY: &str = "Noto Sans CJK SC";
 /// 行高倍数：CSS 未设 line-height，走字体 normal；实测对齐 Chromium（Noto Sans CJK ≈1.47）
@@ -88,48 +85,6 @@ const RED: (u8, u8, u8) = (0xf4, 0x43, 0x36);
 
 const WHITE: (u8, u8, u8) = (0xff, 0xff, 0xff);
 const BLACK: (u8, u8, u8) = (0x00, 0x00, 0x00);
-
-// ------------- Python 语义小工具（保持原 status_render.rs 一致） -------------
-
-fn python_str(value: &Value) -> String {
-    match value {
-        Value::Null => "None".to_string(),
-        Value::Bool(b) => {
-            if *b {
-                "True".to_string()
-            } else {
-                "False".to_string()
-            }
-        }
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-fn py_get_str(obj: &Value, key: &str, default: &str) -> String {
-    match obj.get(key) {
-        Some(v) => python_str(v),
-        None => default.to_string(),
-    }
-}
-
-fn truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
-        Some(Value::String(s)) => !s.is_empty(),
-        Some(Value::Array(a)) => !a.is_empty(),
-        Some(Value::Object(o)) => !o.is_empty(),
-    }
-}
-
-fn clean_player_name(player: &Value) -> String {
-    python_str(player)
-        .trim_start_matches(['•', ' '])
-        .trim()
-        .to_string()
-}
 
 // ---------------------------- 错误类型 ----------------------------
 
@@ -190,12 +145,6 @@ fn font_available(fs: &mut FontSystem) -> bool {
     fs.db().query(&query).is_some()
 }
 
-fn shape(fs: &mut FontSystem, text: &str, size: f32, weight: Weight) -> Buffer {
-    shape_width(fs, text, size, weight, None)
-}
-
-/// 与 [`shape`] 相同，但可指定换行宽度（`Some(w)` 时按词/字换行，`None` 不换行）。
-/// v0.5 播报长图用固定宽度 → 需要真实换行。
 fn shape_width(
     fs: &mut FontSystem,
     text: &str,
@@ -224,7 +173,7 @@ fn measure(fs: &mut FontSystem, text: &str, size: f32, weight: f32, ls: f32) -> 
     if text.is_empty() {
         return 0.0;
     }
-    let buffer = shape(fs, text, size, css_weight(weight));
+    let buffer = shape_width(fs, text, size, css_weight(weight), None);
     let mut w: f32 = 0.0;
     for run in buffer.layout_runs() {
         w = w.max(run.line_w);
@@ -233,15 +182,6 @@ fn measure(fs: &mut FontSystem, text: &str, size: f32, weight: f32, ls: f32) -> 
 }
 
 // ---------------------------- SVG 生成基元 ----------------------------
-
-fn color_attr(rgb: (u8, u8, u8), opacity: f32) -> String {
-    let (r, g, b) = rgb;
-    if opacity >= 1.0 {
-        format!("#{r:02X}{g:02X}{b:02X}")
-    } else {
-        format!("#{r:02X}{g:02X}{b:02X}\" fill-opacity=\"{opacity:.3}")
-    }
-}
 
 /// 圆角矩形（fill 可带透明度；stroke 可选）。
 #[allow(clippy::too_many_arguments)]
@@ -346,7 +286,12 @@ fn push_flow(
     }
     let w = css_weight(weight);
     let buffer = shape_width(fs, text, size, w, width);
-    let fill = color_attr(color, opacity);
+    let (r, g, b) = color;
+    let fill = if opacity >= 1.0 {
+        format!("#{r:02X}{g:02X}{b:02X}")
+    } else {
+        format!("#{r:02X}{g:02X}{b:02X}\" fill-opacity=\"{opacity:.3}")
+    };
     let line_h = size * LINE_H;
     let mut lines = 0u32;
     for run in buffer.layout_runs() {
@@ -470,9 +415,7 @@ fn card_height(_fs: &mut FontSystem, card: &Card) -> f32 {
     let mut h = ITEM_PAD * 2.0;
     h += ITEM_NAME_FS * LINE_H + ITEM_NAME_MB;
     h += STATUS_FS * LINE_H + STATUS_PAD_V * 2.0 + STATUS_MB;
-    for d in &card.details {
-        h += text_height(DETAIL_FS, d);
-    }
+    h += DETAIL_FS * LINE_H * card.details.len() as f32;
     if let Some(players) = &card.players {
         h += PLAYERS_MT;
         let list = if players.is_empty() {
@@ -484,14 +427,6 @@ fn card_height(_fs: &mut FontSystem, card: &Card) -> f32 {
         h += n as f32 * PLAYER_FS * LINE_H + (n.saturating_sub(1) as f32) * PLAYER_GAP;
     }
     h
-}
-
-/// 文本行块高度（单行）。
-fn text_height(size: f32, text: &str) -> f32 {
-    if text.is_empty() {
-        return 0.0;
-    }
-    size * LINE_H
 }
 
 /// 网格（两列）的总宽度与外框高度。
@@ -537,7 +472,7 @@ pub async fn render_status_png(
 
 /// 同步渲染入口（便于单测）。
 pub fn render(data: &Value, addresses: Option<&[(String, String)]>) -> Result<Vec<u8>, RenderError> {
-    let default_addresses: Vec<(String, String)> = DEFAULT_ADDRESSES
+    let default_addresses: Vec<(String, String)> = DEFAULT_SERVER_ADDRESSES
         .iter()
         .map(|(l, v)| (l.to_string(), v.to_string()))
         .collect();
@@ -819,10 +754,8 @@ pub fn render(data: &Value, addresses: Option<&[(String, String)]>) -> Result<Ve
         }
     };
 
-    let routes_col_w = routes_grid_w / 2.0 - GRID_GAP / 2.0;
-    let servers_col_w = servers_grid_w / 2.0 - GRID_GAP / 2.0;
-    // 两列等宽：用统一列宽（取两个网格的最大值）以对齐左右
-    let col_w = routes_col_w.max(servers_col_w);
+    // 两列等宽：统一列宽取两个网格的最大值，保证左右对齐
+    let col_w = routes_grid_w.max(servers_grid_w) / 2.0 - GRID_GAP / 2.0;
     draw_grid(&mut svg, &mut fs, &mut cache, &routes, routes_grid_top, col_w);
     draw_grid(&mut svg, &mut fs, &mut cache, &servers, servers_grid_top, col_w);
 
@@ -884,8 +817,6 @@ fn rasterize(
         .encode_png()
         .map_err(|e| RenderError::Raster(e.to_string()))
 }
-
-// 面板 y 由调用方已知（=BODY_PAD）
 
 /// 对画布中 [x,y,w,h] 矩形区域做高斯模糊（外扩 pad，clamp 到画布）。
 /// 为提速：区域降采样到 1/4 再模糊（sigma 同比缩小），完成后放大贴回；

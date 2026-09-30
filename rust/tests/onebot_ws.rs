@@ -379,3 +379,66 @@ async fn send_group_text_wire_format() {
     drop(out_tx);
     server.stop().await;
 }
+
+/// 入站背压：消费者挂在第一条消息上时，队列（容量 128）还能再收 128 条。
+/// 总计发 131 条 → 129 条被占用/排队，2 条满载丢弃（若只发 130 条则丢 1 条）。
+/// 读取循环全程不被卡死（group_messages 持续增长），放行后未丢弃的消息全部消费。
+#[tokio::test]
+async fn inbound_queue_backpressure_drops_and_counts() {
+    use tokio::sync::Notify;
+
+    let release = Arc::new(Notify::new());
+    let handled = Arc::new(AtomicU64::new(0));
+    let handler: GroupMessageHandler = {
+        let release = release.clone();
+        let handled = handled.clone();
+        Arc::new(move |_conn: Arc<OneBotConnection>, _message: GroupMessage| {
+            let release = release.clone();
+            let handled = handled.clone();
+            Box::pin(async move {
+                // 只挂住第一条（fetch_add 返回 0 的仅此一次）：消费者占住期间队列才能被填满
+                if handled.fetch_add(1, Ordering::Relaxed) == 0 {
+                    release.notified().await;
+                }
+            }) as BoxFuture<'static, ()>
+        })
+    };
+    let (server, addr) = start_server(TOKEN, handler).await;
+    let ws = connect_client(addr, Some(TOKEN), "").await;
+    let (out_tx, _napcat) = spawn_fake_napcat(ws, None);
+
+    out_tx.send(group_event(1)).unwrap();
+    wait_for(
+        || handled.load(Ordering::Relaxed) == 1,
+        Duration::from_secs(3),
+        "第一条应进入 handler 并挂起",
+    )
+    .await;
+
+    // 再发 130 条（总 131）：128 条进队列，2 条满载丢弃
+    for id in 2..=131i64 {
+        out_tx.send(group_event(id)).unwrap();
+    }
+    wait_for(
+        || server.stats().group_messages == 131,
+        Duration::from_secs(3),
+        "读取循环不应被队列拖住：131 条都应被解析入队",
+    )
+    .await;
+    assert_eq!(
+        server.stats().dropped_events,
+        2,
+        "总 131 条、在途 1 条、队列容量 128 → 应丢弃 2 条"
+    );
+
+    release.notify_one();
+    wait_for(
+        || handled.load(Ordering::Relaxed) == 129,
+        Duration::from_secs(3),
+        "放行后 129 条未丢弃消息（1 挂起 + 128 排队）应全部消费",
+    )
+    .await;
+
+    drop(out_tx);
+    server.stop().await;
+}

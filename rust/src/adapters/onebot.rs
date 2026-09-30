@@ -46,6 +46,13 @@ const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(20);
 const HEARTBEAT: Duration = Duration::from_secs(30);
 /// 单条消息上限 16 MiB。
 const MAX_MESSAGE_SIZE: usize = 16 * 1024 * 1024;
+/// 入站事件队列容量（突发缓冲）。消费端单线程顺序处理，慢操作（LLM / 渲染 / 索引）
+/// 期间靠它吸收突发；满时丢弃新事件并计数——宁可丢一条群消息也不能堵死 WS 读取
+/// 循环（读取被堵会让动作响应和心跳一起假死，整条连接不可用）。
+const QUEUE_CAPACITY: usize = 128;
+/// 单连接出站动作队列容量。动作调用有 20s 超时、并发有限，32 绰绰有余；
+/// 满时调用立即失败（Failed），不做无界积压。
+const OUTBOUND_CAPACITY: usize = 32;
 
 /// 群消息处理器。
 pub type GroupMessageHandler = Arc<
@@ -289,8 +296,8 @@ pub enum OneBotError {
 
 /// 一条已建立的 OneBot 连接。动作调用与事件接收共用这条 WS。
 pub struct OneBotConnection {
-    /// 发往 WS 写任务的消息通道（动作请求从这里出去）。
-    outbound: mpsc::UnboundedSender<Message>,
+    /// 发往 WS 写任务的消息通道（动作请求从这里出去）。有界，满时 call 立即失败。
+    outbound: mpsc::Sender<Message>,
     /// echo 自增计数（首个 echo 为 1）。
     counter: AtomicU64,
     call_timeout: Duration,
@@ -303,7 +310,7 @@ pub struct OneBotConnection {
 }
 
 impl OneBotConnection {
-    fn new(outbound: mpsc::UnboundedSender<Message>) -> Self {
+    fn new(outbound: mpsc::Sender<Message>) -> Self {
         Self {
             outbound,
             counter: AtomicU64::new(0),
@@ -339,16 +346,20 @@ impl OneBotConnection {
         let (tx, rx) = oneshot::channel();
         self.lock_pending().insert(echo, tx);
         let payload = json!({ "action": action, "params": params, "echo": echo });
-        let result = if self.outbound.send(Message::text(payload.to_string())).is_err() {
+        let result = match self.outbound.try_send(Message::text(payload.to_string())) {
+            // 出站队列满：立即失败，不等 20s 超时（写任务被拖住时无界等只会更糟）
+            Err(mpsc::error::TrySendError::Full(_)) => Err(OneBotError::Failed {
+                retcode: -1,
+                detail: "出站队列已满".into(),
+            }),
             // 写任务已退出：连接不再可用
-            Err(OneBotError::Closed)
-        } else {
-            match timeout(self.call_timeout, rx).await {
+            Err(_) => Err(OneBotError::Closed),
+            Ok(()) => match timeout(self.call_timeout, rx).await {
                 Ok(Ok(Ok(data))) => Ok(data),
                 Ok(Ok(Err(err))) => Err(err), // feed 报告的动作失败
                 Ok(Err(_)) => Err(OneBotError::Closed), // sender 被丢弃 → 连接关闭
                 Err(_) => Err(OneBotError::Timeout(self.call_timeout)),
-            }
+            },
         };
         self.lock_pending().remove(&echo);
         result
@@ -446,6 +457,8 @@ struct Shared {
     queue_tx: Mutex<Option<EventSender>>,
     connections: AtomicU64,
     group_messages: AtomicU64,
+    /// 入站队列满被丢弃的事件数（/api/status 的 onebot.stats 与 warn 日志可见）。
+    dropped_events: AtomicU64,
     /// 健康扩展回调（service 装配后挂入）：healthz 据此附带全部子服务的健康清单。
     health_extra: Mutex<Option<HealthExtraProvider>>,
     /// 指标回调（service 装配后挂入）：/metrics 据此输出 Prometheus 文本。
@@ -460,8 +473,8 @@ pub type HealthExtraProvider = Arc<dyn Fn() -> Vec<SubsystemHealth> + Send + Syn
 /// 指标回调：返回 Prometheus 文本格式指标（`/metrics` 响应体）。
 pub type MetricsProvider = Arc<dyn Fn() -> String + Send + Sync>;
 
-/// 事件队列发送端：从 WS 读取循环送入消费者任务。
-type EventSender = mpsc::UnboundedSender<(Arc<OneBotConnection>, GroupMessage)>;
+/// 事件队列发送端：从 WS 读取循环送入消费者任务。有界：满时调用方 try_send 立即失败。
+type EventSender = mpsc::Sender<(Arc<OneBotConnection>, GroupMessage)>;
 
 impl Shared {
     fn lock_connection(&self) -> MutexGuard<'_, Option<Arc<OneBotConnection>>> {
@@ -504,6 +517,7 @@ pub struct OneBotServer {
 pub struct ServerStats {
     pub connections: u64,
     pub group_messages: u64,
+    pub dropped_events: u64,
 }
 
 impl OneBotServer {
@@ -530,6 +544,7 @@ impl OneBotServer {
                 queue_tx: Mutex::new(None),
                 connections: AtomicU64::new(0),
                 group_messages: AtomicU64::new(0),
+                dropped_events: AtomicU64::new(0),
                 health_extra: Mutex::new(None),
                 metrics_extra: Mutex::new(None),
                 shutdown,
@@ -542,6 +557,7 @@ impl OneBotServer {
         ServerStats {
             connections: self.shared.connections.load(Ordering::Relaxed),
             group_messages: self.shared.group_messages.load(Ordering::Relaxed),
+            dropped_events: self.shared.dropped_events.load(Ordering::Relaxed),
         }
     }
 
@@ -577,7 +593,7 @@ impl OneBotServer {
         let listener = TcpListener::bind((self.host.as_str(), self.port)).await?;
         let local_addr = listener.local_addr()?;
 
-        let (queue_tx, mut queue_rx) = mpsc::unbounded_channel();
+        let (queue_tx, mut queue_rx) = mpsc::channel(QUEUE_CAPACITY);
         *self.shared.lock_queue() = Some(queue_tx);
 
         // 事件消费者：顺序处理队列。事件必须在读取循环之外处理——处理器经常
@@ -687,6 +703,7 @@ async fn healthz(State(shared): State<Arc<Shared>>) -> Json<Value> {
         "stats": {
             "connections": shared.connections.load(Ordering::Relaxed),
             "group_messages": shared.group_messages.load(Ordering::Relaxed),
+            "dropped_events": shared.dropped_events.load(Ordering::Relaxed),
         },
     });
     if let Some(subsystems) = subsystems {
@@ -729,7 +746,7 @@ async fn ws_handler(
 
 /// 单条 WS 连接的生命周期：注册连接 → 读取循环（解析 / 入队）→ 收尾清理。
 async fn handle_socket(shared: Arc<Shared>, socket: WebSocket) {
-    let (outbound, mut outbound_rx) = mpsc::unbounded_channel();
+    let (outbound, mut outbound_rx) = mpsc::channel(OUTBOUND_CAPACITY);
     let conn = Arc::new(OneBotConnection::new(outbound));
     *shared.lock_connection() = Some(conn.clone());
     let count = shared.connections.fetch_add(1, Ordering::Relaxed) + 1;
@@ -816,8 +833,11 @@ fn handle_text(shared: &Shared, conn: &Arc<OneBotConnection>, text: &str) {
     };
     shared.group_messages.fetch_add(1, Ordering::Relaxed);
     if let Some(queue) = shared.lock_queue().as_ref() {
-        // 无界队列，send 实际不会失败；即便失败也只是丢弃，不影响读取循环
-        let _ = queue.send((conn.clone(), message));
+        // 有界队列满 → 丢弃新事件并计数（见 QUEUE_CAPACITY 注释：读取循环绝不能被堵）
+        if queue.try_send((conn.clone(), message)).is_err() {
+            let dropped = shared.dropped_events.fetch_add(1, Ordering::Relaxed) + 1;
+            tracing::warn!("入站队列已满（容量 {QUEUE_CAPACITY}），丢弃事件（累计 {dropped}）");
+        }
     }
 }
 
@@ -1060,7 +1080,7 @@ mod tests {
 
     #[tokio::test]
     async fn feed_routes_ok_response_to_data() {
-        let (outbound, _rx) = mpsc::unbounded_channel();
+        let (outbound, _rx) = mpsc::channel(16);
         let conn = Arc::new(OneBotConnection::new(outbound));
 
         let task_conn = conn.clone();
@@ -1079,7 +1099,7 @@ mod tests {
 
     #[tokio::test]
     async fn feed_maps_failure_to_failed_error() {
-        let (outbound, _rx) = mpsc::unbounded_channel();
+        let (outbound, _rx) = mpsc::channel(16);
         let conn = Arc::new(OneBotConnection::new(outbound));
 
         let task_conn = conn.clone();
@@ -1111,7 +1131,7 @@ mod tests {
 
     #[tokio::test]
     async fn feed_ignores_unknown_or_missing_echo() {
-        let (outbound, _rx) = mpsc::unbounded_channel();
+        let (outbound, _rx) = mpsc::channel(16);
         let conn = OneBotConnection::new(outbound);
 
         assert!(!conn.feed(&json!({ "status": "ok", "retcode": 0, "data": {} })));
@@ -1122,10 +1142,26 @@ mod tests {
 
     #[tokio::test]
     async fn closed_connection_call_fails_fast() {
-        let (outbound, _rx) = mpsc::unbounded_channel();
+        let (outbound, _rx) = mpsc::channel(16);
         let conn = OneBotConnection::new(outbound);
         conn.closed.store(true, Ordering::Relaxed);
         let err = conn.call("get_status", json!({})).await.unwrap_err();
         assert_eq!(err.to_string(), "OneBot 连接已关闭");
+    }
+
+    #[tokio::test]
+    async fn call_fails_fast_when_outbound_full() {
+        // 不消费 _rx：从构造侧把队列填满（同模块测试可访问私有常量），
+        // 第 OUTBOUND_CAPACITY + 1 个 call 必须立即 Failed 而不是挂到超时。
+        let (outbound, _rx) = mpsc::channel::<Message>(OUTBOUND_CAPACITY);
+        for _ in 0..OUTBOUND_CAPACITY {
+            outbound.try_send(Message::text("fill")).unwrap();
+        }
+        let conn = OneBotConnection::new(outbound);
+        let err = conn.call("get_status", json!({})).await.unwrap_err();
+        assert!(
+            matches!(err, OneBotError::Failed { retcode: -1, .. }),
+            "出站队列满应立即 Failed: {err}"
+        );
     }
 }

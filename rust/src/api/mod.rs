@@ -192,6 +192,7 @@ async fn status(State(state): State<ApiState>) -> Response {
             "stats": {
                 "connections": onebot_stats.connections,
                 "group_messages": onebot_stats.group_messages,
+                "dropped_events": onebot_stats.dropped_events,
             },
         },
         "chatbridge": {

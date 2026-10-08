@@ -16,38 +16,37 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
 
 一个命令 = `config.json` 里 `agent.skills` 的一条声明（名字、触发前缀、任意多个数据源）。
 **新增 `!xxx` 命令 = 改一行配置重启，零代码。** 触发约定：全部走**显式命令强制触发**
-（`!mc` / `!aimc` / `!wiki` / `!tmc` / `!doc` / `!docs`），不做任何自动/意图路由——那是智能路由
-阶段的事。命令语义一一对应、不混源：`!mc` 只查源码，`!wiki` 只查 Wiki。
+（`!mc` / `!tmc` / `!docs` / `!wiki`），不做任何自动/意图路由——那是智能路由阶段的事。
+命令语义一一对应：`!wiki` 只查 Wiki、`!docs` 只查 RMS 文档；`!mc` 是一个**两段**技能——
+先查 MinecraftDocs 机制文档定位、再翻 15 版源码（见下「分段检索」）。
 
 ```json
 "agent": {
   "enabled": true,
   "llm": { "api_url": "https://llm.example.com/v1/chat/completions", "api_key": "...", "model": "..." },
   "skills": [
-    { "name": "mc",   "description": "MC 源码查询", "max_results": 5,
-      "sources": [ {"type": "local", "root": "/data/docs/mc-source", "extensions": [".java"]} ] },
-    { "name": "aimc", "description": "MC 源码释读（架构与逻辑设计解读文档）",
-      "sources": [ {"type": "local", "root": "/data/docs/aimc", "extensions": [".md"]} ] },
+    { "name": "mc", "max_results": 6, "sources": [
+        {"type": "repo", "repo": "AlexanderjFraser/MinecraftDocs", "branch": "main", "subdir": "src",
+         "site_url": "https://minecraftdocs.dev", "extensions": [".md"],
+         "exclude": ["summary.md", "reference/class-index"], "name": "minecraftdocs", "stage": 1},
+        {"type": "local", "root": "/data/docs/mc-source", "extensions": [".java"],
+         "name": "mc-source", "stage": 2} ] },
     { "name": "tmc",  "sources": [ {"type": "repo", "repo": "techmc-wiki/articles", "branch": "main",
-                                    "site_url": "", "extensions": [".zh.md", ".md"]} ] },
-    { "name": "doc",  "sources": [ {"type": "repo", "repo": "Conflux-Union/RMS-Docs", "branch": "master",
-                                    "site_url": "https://docs.rms.net.cn"} ] },
-    { "name": "docs", "sources": [ {"type": "repo", "repo": "AlexanderjFraser/MinecraftDocs", "branch": "main",
-                                    "subdir": "src", "site_url": "https://minecraftdocs.dev",
-                                    "extensions": [".md"], "exclude": ["summary.md", "reference/class-index"]} ] },
+                                    "site_url": "https://techmc.wiki", "extensions": [".zh.md", ".md"]} ] },
+    { "name": "docs", "sources": [ {"type": "repo", "repo": "Conflux-Union/RMS-Docs", "branch": "master",
+                                    "site_url": "https://docs.cxu.org.cn"} ] },
     { "name": "wiki", "sources": [ {"type": "mediawiki", "api_url": "https://zh.minecraft.wiki/api.php"} ] }
   ]
 }
 ```
 
 - `!tmc` 的语料是 GTMC 文章库（techmc.wiki 的源仓库，双语 `.zh.md`/`.en.md`）；
-  `site_url` 留空 → 出处用 GitHub blob 文件地址（保留完整路径）；`extensions`
-  用后缀匹配，可写 `.zh.md` 只收中文版（默认全收）。
-- 命令语义一一对应（**不混源**）：`!mc` 只查源码、`!wiki` 只查 Wiki、`!aimc` 只查
-  源码释读文档（语料就位即生效，目录缺失时检索返回空并告警）、`!docs` 只查
-  MinecraftDocs 系统机制文档（英文语料，检索用英文关键词）。
+  `extensions` 用后缀匹配，可写 `.zh.md` 只收中文版（默认全收）。
+- **分段检索（`stage`）**：数据源可带 `stage`（缺省 1）；同一技能内按 stage 升序**逐段**
+  检索，后段把前段命中里榨出的标识符（反引号标识符 / 驼峰类名）补进查询词。`!mc` 的
+  「先查 MinecraftDocs 机制文档定位、再翻源码」即由此实现；单段（缺省）行为不变。
 
-- 多源合并：结果按源交错、标注来源名、总量 ≤ `max_results`。
+- 多源合并：同段内结果按源交错、标注来源名，各段按 stage 顺序拼接，总量 ≤ `max_results`。
 - 单个源无效（如目录不存在）只跳过该源；全部无效则该技能不注册。
 - 索引惰性构建（首次查询时），只存词频向量不存正文，snippet 查询时按需读文件；语料更新靠重启。
 

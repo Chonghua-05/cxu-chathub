@@ -78,18 +78,22 @@
 
 | `type` | 字段 | 说明 |
 |--------|------|------|
-| `local` | `root`（目录）、`extensions`（白名单，空=内置默认集）、`exclude`（路径排除子串）、`name` | 本地目录检索；md 按标题分节、代码按行窗分块，IDF+路径分词+文件级聚合；出处=`文件:行号区间` |
-| `mediawiki` | `api_url`（…/api.php）、`name` | MediaWiki 站点两步查询；出处=条目 URL |
-| `repo` | `repo`（"owner/name" 或完整 tarball URL）、`branch`(main)、`subdir`（如 mdBook 的 "src"）、`site_url`（出处映射，如 https://minecraftdocs.dev ）、`extensions`（后缀白名单）、`exclude`（路径排除子串）、`name` | GitHub 仓库文档：tarball 下载到系统临时目录缓存（24h 刷新，失败回退旧缓存），委托本地检索；出处=站点页面 URL |
+| `local` | `root`（目录）、`extensions`（白名单，空=内置默认集）、`exclude`（路径排除子串）、`name`、`stage` | 本地目录检索；md 按标题分节、代码按行窗分块，IDF+路径分词+文件级聚合；出处=`文件:行号区间` |
+| `mediawiki` | `api_url`（…/api.php）、`name`、`stage` | MediaWiki 站点两步查询；出处=条目 URL |
+| `repo` | `repo`（"owner/name" 或完整 tarball URL）、`branch`(main)、`subdir`（如 mdBook 的 "src"）、`site_url`（出处映射，如 https://minecraftdocs.dev ）、`extensions`（后缀白名单）、`exclude`（路径排除子串）、`name`、`stage` | GitHub 仓库文档：tarball 下载到系统临时目录缓存（24h 刷新，失败回退旧缓存），委托本地检索；出处=站点页面 URL |
 
 `exclude`：相对路径（小写化）包含任一子串的文件不进索引，用于索引页/目录页这类
 「什么查询都命中但永远不是答案」的检索噪声（如 mdBook 的 `SUMMARY.md`、全站类名索引页）。
 
+`stage`：数据源可带检索分段（缺省 1）。同一技能内按 stage 升序**逐段**检索，后段把前段
+命中里榨出的标识符（反引号标识符 / 驼峰类名）补进查询词，实现「先查文档定位、再翻源码」；
+只有单段（缺省）时行为不变（并发交错合并）。
+
 中文问题对英文语料的检索：配置了 `llm` 时自动把问题翻译成英文关键词（MC 术语用官方
 英文名），原文与译文各查一遍按出处去重合并；无 LLM 时只用原文查询。
 
-示例：`!mc` 接本地 MC 源码副本、`!aimc` 接源码释读文档、`!tmc` 接 GTMC 文章库、
-`!doc` 接 RMS-Docs、`!docs` 接云端 MinecraftDocs（英文语料，检索用英文关键词）、
+示例：`!mc` 两段——MinecraftDocs 机制文档（`stage:1`，定位）→ 15 版 MC 源码（`stage:2`，取码）；
+`!tmc` 接 GTMC 文章库（techmc.wiki）、`!docs` 接 RMS-Docs（docs.cxu.org.cn）、
 `!wiki` 接 zh.minecraft.wiki——见 `config.example.json` 的 `agent` 段。
 检索质量调试工具：`cargo run --release --example doc_query -- <目录> <查询词> [扩展名]`；
 批量评测：`cargo run --release --example eval_retrieval -- rust/eval/<问题集>.json`（见

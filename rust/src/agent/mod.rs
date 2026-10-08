@@ -6,12 +6,14 @@
 //!
 //! | 命令 | 数据源 | 形态 |
 //! |------|--------|------|
-//! | `!mc` | MC 源码 | 本地源码副本检索，回答带文件/行级出处 |
-//! | `!aimc` | 源码释读文档 | 本地文档 |
-//! | `!tmc` | GTMC 文章库 | 云端仓库（tarball 缓存） |
-//! | `!doc` | RMS-Docs | 云端仓库 |
-//! | `!docs` | MinecraftDocs | 云端仓库（英文语料，`exclude` 路径排除） |
+//! | `!mc` | MinecraftDocs（stage 1）→ 15 版 MC 源码（stage 2） | 云端仓库 + 本地源码；先查机制文档定位、再翻源码 |
+//! | `!tmc` | GTMC 文章库（techmc.wiki） | 云端仓库（tarball 缓存） |
+//! | `!docs` | RMS-Docs（docs.cxu.org.cn） | 云端仓库 |
 //! | `!wiki` | Minecraft Wiki | MediaWiki API |
+//!
+//! 数据源支持 `stage` 字段（缺省 1）：同一技能内按 stage 升序**逐段**检索，后段把
+//! 前段命中里榨出的标识符（反引号标识符 / 驼峰类名）补进查询词——`!mc` 的
+//! 「先查机制文档定位、再翻源码」即由此实现。单段（缺省）行为不变：并发交错合并。
 //!
 //! [`crate::agent::routing`]（灰度）把不带命令前缀、且 @ 了机器人的自然语言消息
 //! 路由到技能；完整设计见 `docs/agent-design.md`。

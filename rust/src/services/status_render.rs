@@ -1003,6 +1003,25 @@ const BULLETIN_BG: (u8, u8, u8) = (0x0a, 0x0a, 0x0a);
 const BULLETIN_FG: (u8, u8, u8) = (0xf2, 0xf2, 0xf2);
 const BULLETIN_DIM: (u8, u8, u8) = (0x8a, 0x8f, 0x99);
 
+/// 播报长图专用字体：覆盖常用汉字的宽字符集子集（ASCII + GB2312 全表），
+/// 内嵌进二进制。与状态图那套「窄子集」（只有几十个固定汉字）分离——播报要
+/// 渲染任意中文补丁说明，窄子集会大片缺字。
+const BULLETIN_FONT_REGULAR: &[u8] =
+    include_bytes!("../../assets/fonts/bulletin/NotoSansCJKsc-Regular.otf");
+const BULLETIN_FONT_BOLD: &[u8] =
+    include_bytes!("../../assets/fonts/bulletin/NotoSansCJKsc-Bold.otf");
+
+/// 播报专用的字体系统（仅装内嵌的宽字符集字体，不扫描系统字体）。
+fn bulletin_font_system() -> &'static Mutex<FontSystem> {
+    static FS: OnceLock<Mutex<FontSystem>> = OnceLock::new();
+    FS.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_font_data(BULLETIN_FONT_REGULAR.to_vec());
+        db.load_font_data(BULLETIN_FONT_BOLD.to_vec());
+        Mutex::new(FontSystem::new_with_locale_and_db("zh-CN".to_string(), db))
+    })
+}
+
 fn block_text(block: &Block) -> String {
     match block {
         Block::Title(s) => s.clone(),
@@ -1021,7 +1040,7 @@ fn block_font(block: &Block) -> (f32, f32) {
 /// 渲染 v0.5 播报长图：黑底白字、固定 900px 宽、高度自适应，标题在顶部。
 /// 复用 /server 的 cosmic-text 整形 → glyph path → resvg 管线；无背景/毛玻璃/图标。
 pub fn render_bulletin_png(title: &str, blocks: &[Block]) -> Result<Vec<u8>, RenderError> {
-    let mut fs = font_system().lock().unwrap();
+    let mut fs = bulletin_font_system().lock().unwrap();
     if !font_available(&mut fs) {
         return Err(RenderError::FontNotFound(FONT_FAMILY.to_string()));
     }

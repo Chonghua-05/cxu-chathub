@@ -204,9 +204,11 @@ function setPath(obj, dotted, value) {
   cur[keys[keys.length - 1]] = value;
 }
 
-// 字段的绝对配置路径（root 分区直接在顶层）
-function fieldPath(secKey, field) {
-  return secKey === 'root' ? field.k : secKey + '.' + field.k;
+// 字段的绝对配置路径（root 分区直接在顶层；分区可用 section.key 指定实际配置段名，
+// 如 patch 分区对应 patch_broadcast，见 SECTIONS.patch.key）
+function fieldPath(secKey, section, field) {
+  const base = section.key || secKey;
+  return secKey === 'root' ? field.k : base + '.' + field.k;
 }
 
 // 单个字段控件（含 data-path = 绝对配置路径，供收集）
@@ -286,7 +288,7 @@ function renderAllConfigForms(masked) {
     if (!table) continue;
     table.innerHTML = '';
     for (const field of section.fields) {
-      const dotted = fieldPath(secKey, field);
+      const dotted = fieldPath(secKey, section, field);
       const tr = table.insertRow(-1);
       const tdLabel = tr.insertCell(-1);
       tdLabel.width = 150;

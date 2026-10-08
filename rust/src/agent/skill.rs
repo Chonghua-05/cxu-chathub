@@ -34,6 +34,9 @@ pub struct DocQuerySkill {
     trigger: String,
     description: String,
     sources: Vec<Arc<dyn DocumentSource>>,
+    /// 各数据源的检索分段，与 `sources` 一一对应（缺省全 1）。多段时按段号升序
+    /// 逐段查——「先查文档、再翻源码」靠它实现，后段把前段命中的标识符补进查询词。
+    stages: Vec<u8>,
     llm: Option<LlmClient>,
     max_results: usize,
     max_answer_chars: usize,
@@ -51,22 +54,31 @@ impl DocQuerySkill {
         max_results: usize,
         max_answer_chars: usize,
     ) -> Self {
+        let stages = vec![1u8; sources.len()];
         Self {
             name: name.into(),
             trigger: trigger.into(),
             description: description.into(),
             sources,
+            stages,
             llm,
             max_results,
             max_answer_chars,
         }
     }
 
-    /// 并发查询所有源（每源 limit = max_results），交错合并：
-    /// 源0第1条、源1第1条、源0第2条……总条数 ≤ max_results。
-    /// 带查询翻译的多查询检索：中文问题对英文语料（MC 源码 / 英文文档）无法直接命中，
-    /// 有 LLM 时把问题翻译成英文关键词，原文与译文各查一遍、按 locator 去重合并，
-    /// 总量 ≤ max_results。无 LLM / 无中文 / 翻译失败 → 只查原文（行为同旧）。
+    /// 设置各数据源的检索分段（与 `sources` 一一对应；长度不符时退回全 1）。
+    pub fn with_stages(mut self, stages: Vec<u8>) -> Self {
+        self.stages = stages;
+        self
+    }
+
+    /// 分阶段检索。
+    ///
+    /// 单段（全部源 stage=1）：并发查所有源、交错合并、按 locator 去重，总量 ≤ max_results
+    /// （行为同旧）。多段：按 stage 升序**逐段**查——「先查文档、再翻源码」；每段均分名额
+    /// （余数给最后一段、每段至少 1 条），后段把前段命中里榨出的标识符（反引号标识符 /
+    /// 驼峰类名）补进查询词，实现「用文档定位、再去源码取」。中文问题有 LLM 时自动加查译文。
     async fn search_queries(&self, original: &str) -> Vec<SourcedHit> {
         let mut queries = vec![original.to_string()];
         if original.chars().any(crate::agent::local::is_cjk) {
@@ -84,33 +96,73 @@ impl DocQuerySkill {
                 }
             }
         }
+        if self.max_results == 0 {
+            return Vec::new();
+        }
 
-        let mut merged: Vec<SourcedHit> = Vec::new();
+        // 按 stage 分组（升序逐段查）。stages 与 sources 不同长时退回单段。
+        let stages = if self.stages.len() == self.sources.len() {
+            self.stages.clone()
+        } else {
+            vec![1u8; self.sources.len()]
+        };
+        let mut by_stage: std::collections::BTreeMap<u8, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (idx, stage) in stages.iter().enumerate() {
+            by_stage.entry(*stage).or_default().push(idx);
+        }
+        let stage_count = by_stage.len().max(1);
+        let base = self.max_results / stage_count;
+        let remainder = self.max_results % stage_count;
+
+        let mut all: Vec<SourcedHit> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for query in &queries {
-            for sourced in self.search_merged(query).await {
-                if seen.insert(sourced.1.locator.clone()) {
-                    merged.push(sourced);
-                    if merged.len() >= self.max_results {
-                        return merged;
+        let mut carry = String::new();
+        for (k, idxs) in by_stage.values().enumerate() {
+            // 本段名额：均分，余数给最后一段
+            let cap = (base + if k + 1 == stage_count { remainder } else { 0 }).max(1);
+            let mut stage_queries = queries.clone();
+            if !carry.is_empty() {
+                stage_queries.push(carry.clone());
+            }
+            let mut stage_hits: Vec<SourcedHit> = Vec::new();
+            for q in &stage_queries {
+                for (name, hit) in self.search_sources(idxs, q, cap).await {
+                    if seen.insert(hit.locator.clone()) {
+                        stage_hits.push((name, hit));
+                        if stage_hits.len() >= cap {
+                            break;
+                        }
                     }
                 }
+                if stage_hits.len() >= cap {
+                    break;
+                }
+            }
+            carry = harvest_terms(&stage_hits);
+            all.extend(stage_hits);
+            if all.len() >= self.max_results {
+                break;
             }
         }
-        merged
+        all.truncate(self.max_results);
+        all
     }
 
-    async fn search_merged(&self, query: &str) -> Vec<SourcedHit> {
-        let per_source: Vec<(String, Vec<DocHit>)> =
-            join_all(self.sources.iter().map(|source| async move {
-                let hits = source.search(query, self.max_results).await;
-                (source.name().to_string(), hits)
-            }))
-            .await;
-        let mut merged: Vec<SourcedHit> = Vec::new();
-        if self.max_results == 0 {
-            return merged;
+    /// 并发查询指定的一组源（每源 limit = cap），交错合并：源0第1条、源1第1条……总量 ≤ cap。
+    async fn search_sources(&self, idxs: &[usize], query: &str, cap: usize) -> Vec<SourcedHit> {
+        if cap == 0 {
+            return Vec::new();
         }
+        let per_source: Vec<(String, Vec<DocHit>)> = join_all(idxs.iter().map(|&i| {
+            let source = self.sources[i].clone();
+            async move {
+                let hits = source.search(query, cap).await;
+                (source.name().to_string(), hits)
+            }
+        }))
+        .await;
+        let mut merged: Vec<SourcedHit> = Vec::new();
         let rounds = per_source
             .iter()
             .map(|(_, hits)| hits.len())
@@ -120,7 +172,7 @@ impl DocQuerySkill {
             for (source, hits) in &per_source {
                 if let Some(hit) = hits.get(idx) {
                     merged.push((source.clone(), hit.clone()));
-                    if merged.len() >= self.max_results {
+                    if merged.len() >= cap {
                         break 'outer;
                     }
                 }
@@ -192,6 +244,53 @@ fn build_prompt(query: &str, hits: &[SourcedHit]) -> String {
         ));
     }
     prompt
+}
+
+/// 从一段命中里榨取下一段可用的检索词：反引号包裹的标识符（MinecraftDocs 用它标注
+/// 类/方法名）+ 内部带大写的驼峰词，按频次取前 8 个、空格连接。用于「先查文档定位、
+/// 再翻源码」——把文档里点名的类/方法补进源码查询词。
+fn harvest_terms(hits: &[SourcedHit]) -> String {
+    use std::collections::HashMap;
+    let mut freq: HashMap<String, usize> = HashMap::new();
+    for (_, hit) in hits {
+        let text = format!("{}\n{}", hit.title, hit.snippet);
+        for seg in text.split('`').skip(1).step_by(2) {
+            let t = seg.trim();
+            if is_ident(t) {
+                *freq.entry(t.to_string()).or_insert(0) += 2;
+            }
+        }
+        for tok in text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+            if is_camel(tok) {
+                *freq.entry(tok.to_string()).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut terms: Vec<(String, usize)> = freq.into_iter().collect();
+    terms.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    terms
+        .into_iter()
+        .take(8)
+        .map(|(t, _)| t)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 像标识符吗：字母开头，仅含字母数字/下划线/点，长度 3..=40。
+fn is_ident(s: &str) -> bool {
+    let len = s.chars().count();
+    (3..=40).contains(&len)
+        && s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
+/// 驼峰词：首字母大写且后面还有大写（区分 `RaidManager` 与句首词 `The`），长度 ≥ 4。
+fn is_camel(s: &str) -> bool {
+    let len = s.chars().count();
+    (4..=40).contains(&len)
+        && s.starts_with(|c: char| c.is_ascii_uppercase())
+        && s.chars().skip(1).any(|c| c.is_ascii_uppercase())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// UTF-8 安全截断：超过 `max_chars` 个字符时按字符边界切掉尾部并追加标记。
@@ -533,6 +632,42 @@ mod tests {
             sink.texts.lock().unwrap().as_slice(),
             ["!mc 没查到与「活塞」相关的内容"]
         );
+    }
+
+    #[tokio::test]
+    async fn skill_staged_sources_query_doc_first_and_carry_identifiers() {
+        // 文档层（stage 1）命中里点名了 `RaidManager`：源码层（stage 2）应收到把该标识符
+        // 补进查询词的请求，且输出里文档片段排在源码片段之前。
+        let doc = Arc::new(FakeSource::new(
+            "minecraftdocs",
+            vec![FakeSource::hit(
+                "Raids",
+                "docs/raid.md",
+                "the `RaidManager` owns raids",
+            )],
+        ));
+        let src = Arc::new(FakeSource::new(
+            "mc-source",
+            vec![FakeSource::hit("Raid.java", "26.1/Raid.java:1-60", "code")],
+        ));
+        let s = skill("!mc", vec![doc.clone(), src.clone()], None, 4).with_stages(vec![1, 2]);
+        let sink = FakeSink::default();
+        assert!(run(&s, &sink, "!mc raid mechanics").await);
+
+        // 文档层只按原查询词查一次
+        assert_eq!(doc.requests().len(), 1);
+        // 源码层收到的查询词里带上了文档点名的标识符
+        assert!(
+            src.requests().iter().any(|(q, _)| q.contains("RaidManager")),
+            "src requests: {:?}",
+            src.requests()
+        );
+
+        // 输出里文档片段编号在前、源码在后
+        let out = sink.texts.lock().unwrap().join("\n");
+        let doc_pos = out.find("docs/raid.md").expect("doc hit present");
+        let src_pos = out.find("26.1/Raid.java").expect("src hit present");
+        assert!(doc_pos < src_pos, "doc should precede source: {out}");
     }
 
     #[tokio::test]

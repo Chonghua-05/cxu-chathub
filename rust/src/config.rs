@@ -218,12 +218,18 @@ pub enum SourceConfig {
         exclude: Vec<String>,
         #[serde(default)]
         name: String,
+        /// 检索分段：同技能内按 stage 升序逐段查，后段把前段命中的标识符补进查询词
+        #[serde(default = "default_stage")]
+        stage: u8,
     },
     /// MediaWiki 站点（api.php）
     Mediawiki {
         api_url: String,
         #[serde(default)]
         name: String,
+        /// 检索分段（见 Local::stage）
+        #[serde(default = "default_stage")]
+        stage: u8,
     },
     /// GitHub 仓库文档（如 mdBook 站点的 markdown 源）：tarball 下载到本地缓存后
     /// 委托本地检索。`repo` 填 "owner/name"（按 main/`branch` 拼 codeload 地址），
@@ -247,11 +253,30 @@ pub enum SourceConfig {
         exclude: Vec<String>,
         #[serde(default)]
         name: String,
+        /// 检索分段（见 Local::stage）
+        #[serde(default = "default_stage")]
+        stage: u8,
     },
 }
 
 fn default_branch() -> String {
     "main".into()
+}
+
+/// 数据源默认分段：1（同段内并发查、交错合并；多段则按段号升序逐段查）。
+fn default_stage() -> u8 {
+    1
+}
+
+impl SourceConfig {
+    /// 该数据源的检索分段（缺省 1）。
+    pub fn stage(&self) -> u8 {
+        match self {
+            SourceConfig::Local { stage, .. } => *stage,
+            SourceConfig::Mediawiki { stage, .. } => *stage,
+            SourceConfig::Repo { stage, .. } => *stage,
+        }
+    }
 }
 
 /// 一条命令 = 一个技能声明。新增查询命令只需在这里加一条，不改代码。

@@ -80,9 +80,13 @@ pub fn build_skills(agent: &AgentConfig) -> Vec<DocQuerySkill> {
         };
 
         let mut sources: Vec<Arc<dyn DocumentSource>> = Vec::new();
+        let mut stages: Vec<u8> = Vec::new();
         for (index, source_cfg) in skill_cfg.sources.iter().enumerate() {
             match build_source(source_cfg) {
-                Ok(source) => sources.push(source),
+                Ok(source) => {
+                    sources.push(source);
+                    stages.push(source_cfg.stage());
+                }
                 Err(err) => warn!(
                     "技能 {} 的第 {} 个数据源无效，已跳过: {err}",
                     skill_cfg.name,
@@ -94,15 +98,18 @@ pub fn build_skills(agent: &AgentConfig) -> Vec<DocQuerySkill> {
             warn!("技能 {} 没有可用数据源，未注册", skill_cfg.name);
             continue;
         }
-        skills.push(DocQuerySkill::new(
-            skill_cfg.name.clone(),
-            trigger,
-            description,
-            sources,
-            llm.clone(),
-            skill_cfg.max_results,
-            max_answer_chars,
-        ));
+        skills.push(
+            DocQuerySkill::new(
+                skill_cfg.name.clone(),
+                trigger,
+                description,
+                sources,
+                llm.clone(),
+                skill_cfg.max_results,
+                max_answer_chars,
+            )
+            .with_stages(stages),
+        );
     }
     skills
 }
@@ -111,7 +118,7 @@ pub fn build_skills(agent: &AgentConfig) -> Vec<DocQuerySkill> {
 /// pub：检索质量评测（`agent::eval` / `examples/eval_retrieval`）复用同一条建源路径。
 pub fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, String> {
     match cfg {
-        SourceConfig::Local { root, extensions, exclude, name } => {
+        SourceConfig::Local { root, extensions, exclude, name, .. } => {
             if root.is_empty() {
                 return Err("root 为空".into());
             }
@@ -120,7 +127,7 @@ pub fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, Strin
                 LocalDocSource::new(name, root, extensions.clone()).with_excludes(exclude.clone()),
             ))
         }
-        SourceConfig::Mediawiki { api_url, name } => {
+        SourceConfig::Mediawiki { api_url, name, .. } => {
             if api_url.is_empty() {
                 return Err("api_url 为空".into());
             }
@@ -137,6 +144,7 @@ pub fn build_source(cfg: &SourceConfig) -> Result<Arc<dyn DocumentSource>, Strin
             extensions,
             exclude,
             name,
+            ..
         } => {
             if repo.is_empty() {
                 return Err("repo 为空".into());

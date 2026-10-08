@@ -26,7 +26,7 @@ type SourcedHit = (String, DocHit);
 
 /// 查询翻译提示词：中文问题 → 英文检索关键词（MC 术语用官方英文名）。
 /// pub(crate)：检索质量评测（`agent::eval`）对 question 用例复用同一提示词。
-pub(crate) const TRANSLATE_PROMPT: &str = "把下面的问题翻译成适合全文检索的英文关键词（Minecraft 领域术语用官方英文名，如 守卫者→Guardian、刷怪→mob spawning）。只输出关键词本身，不要解释。";
+pub(crate) const TRANSLATE_PROMPT: &str = "把下面的中文问题转成一行英文检索关键词（Minecraft 领域术语用官方英文名：守卫者→Guardian、刷怪→mob spawning、袭击→raid）。只输出最多 15 个英文词、空格分隔；禁止中文、禁止解释、禁止换行、禁止标题或列表。";
 
 /// 配置注册的通用文档查询技能：一个实例 = config 里的一条 skill 声明。
 pub struct DocQuerySkill {
@@ -84,10 +84,16 @@ impl DocQuerySkill {
         if original.chars().any(crate::agent::local::is_cjk) {
             if let Some(llm) = &self.llm {
                 match llm.complete(TRANSLATE_PROMPT, original).await {
-                    Ok(translated) => {
-                        let translated = translated.trim();
-                        if !translated.is_empty() && !translated.eq_ignore_ascii_case(original) {
-                            queries.push(translated.to_string());
+                    Ok(raw) => {
+                        if let Some(kw) = keywords_from_llm(&raw) {
+                            if !kw.eq_ignore_ascii_case(original) {
+                                queries.push(kw);
+                            }
+                        } else {
+                            tracing::warn!(
+                                skill = %self.name,
+                                "翻译输出里没有可用英文关键词，只用原文检索"
+                            );
                         }
                     }
                     Err(err) => {
@@ -244,6 +250,51 @@ fn build_prompt(query: &str, hits: &[SourcedHit]) -> String {
         ));
     }
     prompt
+}
+
+/// 把 LLM 的翻译输出收敛成英文检索关键词。
+///
+/// Lean 版模型常无视「只输出关键词」的指令、直接甩一整篇中文长文——直接拿它当查询词会
+/// 命中一堆高频噪声词，把检索彻底污染（实测：`介绍一下刷怪机制` 被回成几千字中文，
+/// 检索结果全是方块注册/包统计之类的垃圾）。这里只从输出里**抽 ASCII 英文词**（模型即便
+/// 写中文也会点到官方英文术语，如 `Ambient Spawning`/`Mob Cap`），去停用词、去重、限量；
+/// 抽不到英文词就返回 `None`（调用方退化到只用原文，宁可查不到也不给噪声）。
+fn keywords_from_llm(raw: &str) -> Option<String> {
+    const STOPS: &[&str] = &[
+        "the", "a", "an", "of", "to", "in", "on", "and", "or", "is", "are", "be", "for", "with",
+        "that", "this", "it", "as", "by", "at", "from", "into", "when", "which", "can", "will",
+        "not", "no", "yes", "you", "your", "its", "their", "they", "has", "have", "was", "were",
+        "does", "do", "how", "what", "why", "where", "there", "them", "than", "then", "also",
+        "such", "each", "per", "one", "two", "more", "most", "all", "any", "some", "use", "used",
+        "using", "about", "between", "within", "without", "through", "during", "before", "after",
+        "above", "below", "under", "over", "out", "only", "just", "other", "same", "new", "old",
+        "first", "last", "next", "see", "way", "make", "made", "get", "got", "set", "end", "start",
+        "part", "parts", "main", "type", "types", "block", "blocks",
+    ];
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    for tok in raw.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if tok.len() < 2 || tok.len() > 32 {
+            continue;
+        }
+        let lower = tok.to_ascii_lowercase();
+        if STOPS.contains(&lower.as_str()) || lower.chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        if !seen.insert(lower) {
+            continue;
+        }
+        total += tok.len() + 1;
+        if total > 200 {
+            break;
+        }
+        out.push(tok.to_string());
+        if out.len() >= 16 {
+            break;
+        }
+    }
+    (!out.is_empty()).then(|| out.join(" "))
 }
 
 /// 从一段命中里榨取下一段可用的检索词：反引号包裹的标识符（MinecraftDocs 用它标注
@@ -632,6 +683,24 @@ mod tests {
             sink.texts.lock().unwrap().as_slice(),
             ["!mc 没查到与「活塞」相关的内容"]
         );
+    }
+
+    #[test]
+    fn keywords_from_llm_pulls_english_terms_out_of_a_chinese_essay() {
+        // 模型无视「只输出关键词」，甩了一整篇中文长文：只抽英文术语，别带中文
+        let essay = "Minecraft 中的刷怪机制主要分为两大类：\n## 一、自然刷怪（Ambient Spawning）\n光照 ≤ 7，Mob Cap 上限……";
+        let kw = keywords_from_llm(essay).unwrap();
+        for need in ["Minecraft", "Ambient", "Spawning", "Mob", "Cap"] {
+            assert!(kw.contains(need), "missing {need} in {kw}");
+        }
+        assert!(!kw.chars().any(crate::agent::local::is_cjk), "no CJK expected: {kw}");
+        // 正常的关键词输出照常
+        assert_eq!(
+            keywords_from_llm("mob spawning mechanics").unwrap(),
+            "mob spawning mechanics"
+        );
+        // 全是中文、没有任何英文词 → None（调用方退化到只用原文）
+        assert!(keywords_from_llm("刷怪机制如何工作，也没有英文术语").is_none());
     }
 
     #[tokio::test]

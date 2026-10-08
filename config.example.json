@@ -80,7 +80,11 @@
             ],
             "exclude": [
               "summary.md",
-              "reference/class-index"
+              "reference/class-index",
+              "generated/",
+              "maps/",
+              "figures/",
+              "lectures.md"
             ],
             "name": "minecraftdocs",
             "stage": 1

@@ -28,7 +28,7 @@ Agent 检索配置指定的文档源后带着出处回答**——不是聊天机
     { "name": "mc", "max_results": 6, "sources": [
         {"type": "repo", "repo": "AlexanderjFraser/MinecraftDocs", "branch": "main", "subdir": "src",
          "site_url": "https://minecraftdocs.dev", "extensions": [".md"],
-         "exclude": ["summary.md", "reference/class-index"], "name": "minecraftdocs", "stage": 1},
+         "exclude": ["summary.md", "reference/class-index", "generated/", "maps/", "figures/", "lectures.md"], "name": "minecraftdocs", "stage": 1},
         {"type": "local", "root": "/data/docs/mc-source", "extensions": [".java"],
          "name": "mc-source", "stage": 2} ] },
     { "name": "tmc",  "sources": [ {"type": "repo", "repo": "techmc-wiki/articles", "branch": "main",

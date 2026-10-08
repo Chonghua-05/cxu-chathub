@@ -50,25 +50,94 @@ const DEFAULT_EXTS: &[&str] = &[
 /// 索引时直接跳过的目录名（构建产物 / 依赖 / 版本库；隐藏目录另行按 `.` 前缀跳过）。
 const SKIPPED_DIRS: &[&str] = &["target", "node_modules", ".git"];
 
-/// 索引条目：只存轻量元数据，正文不入内存（snippet 查询时按需读文件）。
+/// 索引条目：只存紧凑元数据——路径/标题用表内 id 引用，词用倒排题内 id，
+/// 正文与整串都不驻内存（snippet 查询时按需读文件）。
 struct Chunk {
-    /// 相对 root 的路径（统一用 `/` 分隔；Windows 的 std::fs 也接受该分隔符）。
-    rel_path: String,
+    /// 相对 root 的路径在 `Index.files` 里的下标（同一文件的所有窗口共享一条）。
+    file_id: u32,
+    /// 标题在 `Index.titles` 里的下标（同一文件的所有窗口共享一条）。
+    title_id: u32,
     /// 起始行（1-based，含）。
     start_line: usize,
     /// 结束行（1-based，含）；行数 = end - start + 1。
     end_line: usize,
-    /// 标题：markdown 取标题行去掉前导 `#`，代码取文件名。
-    title: String,
-    /// 词频向量：分词 -> 出现次数。
-    tf: HashMap<String, usize>,
+    /// 词频向量：(term_id, 出现次数)，按 term_id 升序——查询时二分查找。
+    tf: Vec<(u32, u32)>,
 }
 
-/// 内存索引：条目列表 + 词的文档频率（IDF 用）。构建失败（根目录缺失等）时保持为空。
+/// 内存索引：紧凑倒排 + 词/路径/标题字典。构建失败（根目录缺失等）时保持为空。
+///
+/// 内存模型：正文不入内存；每个分块只存 4 个标量 + 一个 `(term_id, count)` 数组
+/// （term_id 是全局字典下标，不再是每块各存一份词串），路径/标题各去重成一张表。
+/// 相比「每块一个 `HashMap<String,usize>` + 各存一份路径/标题串」，语料越大省得越多。
 struct Index {
     chunks: Vec<Chunk>,
-    /// term -> 含该词的分块数。常见词（如 "java"、"import"）靠 IDF 压权。
-    df: HashMap<String, u32>,
+    /// 去重后的相对路径表（`/` 分隔；Windows 的 std::fs 也接受该分隔符）。
+    files: Vec<String>,
+    /// 去重后的标题表（markdown 取标题行去掉前导 `#`，代码取文件名）。
+    titles: Vec<String>,
+    /// 全局词表：词 -> term_id（chunk.tf 里的 id 即此表下标）。
+    terms: HashMap<String, u32>,
+    /// 每个 term_id 的文档频率（含该词的分块数）。常见词（如 "java"、"import"）靠 IDF 压权。
+    df: Vec<u32>,
+}
+
+/// 建索引时的可变累积器：边遍历边填三张字典与分块表，避免先堆一堆
+/// `HashMap<String,_>` 再转换（那样构建期峰值照样爆）。
+struct IndexBuilder {
+    chunks: Vec<Chunk>,
+    files: Vec<String>,
+    titles: Vec<String>,
+    terms: HashMap<String, u32>,
+    title_ids: HashMap<String, u32>,
+    file_count: usize,
+}
+
+impl IndexBuilder {
+    fn new() -> Self {
+        Self {
+            chunks: Vec::new(),
+            files: Vec::new(),
+            titles: Vec::new(),
+            terms: HashMap::new(),
+            title_ids: HashMap::new(),
+            file_count: 0,
+        }
+    }
+
+    /// 词 -> term_id（首次出现时分配）。
+    fn intern_term(&mut self, term: &str) -> u32 {
+        if let Some(&id) = self.terms.get(term) {
+            return id;
+        }
+        let id = self.terms.len() as u32;
+        self.terms.insert(term.to_string(), id);
+        id
+    }
+
+    /// 标题 -> id（同一文件的所有窗口只存一条）。
+    fn intern_title(&mut self, title: &str) -> u32 {
+        if let Some(&id) = self.title_ids.get(title) {
+            return id;
+        }
+        let id = self.titles.len() as u32;
+        self.titles.push(title.to_string());
+        self.title_ids.insert(title.to_string(), id);
+        id
+    }
+}
+
+impl Index {
+    /// 空索引（根目录缺失 / 构建失败 / 无内容）：检索一律返回空。
+    fn empty() -> Self {
+        Self {
+            chunks: Vec::new(),
+            files: Vec::new(),
+            titles: Vec::new(),
+            terms: HashMap::new(),
+            df: Vec::new(),
+        }
+    }
 }
 
 /// 本地文档/源码目录检索。首次 search 时惰性建索引（tokio OnceCell，只建一次，
@@ -156,7 +225,7 @@ impl DocumentSource for LocalDocSource {
                         Ok(index) => index,
                         Err(err) => {
                             warn!(error = %err, "本地文档索引构建任务异常，索引保持为空（重启进程前不会重试）");
-                            Index { chunks: Vec::new(), df: HashMap::new() }
+                            Index::empty()
                         }
                     }
                 }
@@ -170,66 +239,88 @@ impl DocumentSource for LocalDocSource {
         if terms.is_empty() {
             return Vec::new();
         }
+        // 查表：查询词 -> term_id；不在字典里的词不可能命中任何块。
+        let qterms: Vec<(u32, &str)> = terms
+            .iter()
+            .filter_map(|term| index.terms.get(term.as_str()).map(|id| (*id, term.as_str())))
+            .collect();
+        if qterms.is_empty() {
+            return Vec::new();
+        }
+        let file_of = |ci: u32| index.files[index.chunks[ci as usize].file_id as usize].as_str();
 
         // 打分：Σ 查询词 tf × 标题加成 × IDF（稀有词压制到处出现的高频词，
         // 如代码语料里的 "mob"/"import"）；词命中标题行（含标题文本子串）再 ×3。
         let total = index.chunks.len();
-        let mut scored: Vec<(u64, &Chunk)> = index
-            .chunks
-            .iter()
-            .filter_map(|chunk| {
-                let title_lower = chunk.title.to_lowercase();
-                let mut score = 0u64;
-                for term in &terms {
-                    if let Some(tf) = chunk.tf.get(term) {
-                        let df = index.df.get(term).copied().unwrap_or(1).max(1) as f64;
-                        // ln(1 + N/df)：df=N（语料里到处都是）→ ≈0.7，df=1 → ≈ln(N)
-                        let idf_w = ((1.0 + total as f64 / df).ln() * 2.0).round().max(1.0) as u64;
-                        let title_w = if title_lower.contains(term.as_str()) { 3 } else { 1 };
-                        score += *tf as u64 * title_w * idf_w;
-                    }
-                }
-                (score > 0).then_some((score, chunk))
-            })
-            .collect();
+        let mut scored: Vec<(u64, u32)> = Vec::new();
+        for (ci, chunk) in index.chunks.iter().enumerate() {
+            let title_lower = index.titles[chunk.title_id as usize].to_lowercase();
+            let mut score = 0u64;
+            for (tid, term) in &qterms {
+                // chunk.tf 按 term_id 升序存放，二分定位该查询词
+                let Ok(pos) = chunk.tf.binary_search_by_key(tid, |(t, _)| *t) else {
+                    continue;
+                };
+                let tf = chunk.tf[pos].1;
+                let df = index.df[*tid as usize].max(1) as f64;
+                // ln(1 + N/df)：df=N（语料里到处都是）→ ≈0.7，df=1 → ≈ln(N)
+                let idf_w = ((1.0 + total as f64 / df).ln() * 2.0).round().max(1.0) as u64;
+                let title_w = if title_lower.contains(*term) { 3 } else { 1 };
+                score += tf as u64 * title_w * idf_w;
+            }
+            if score > 0 {
+                scored.push((score, ci as u32));
+            }
+        }
         // 排序：分数降序，同分按路径、起始行升序（保证可复现）。
         scored.sort_by(|a, b| {
             b.0.cmp(&a.0)
-                .then_with(|| a.1.rel_path.cmp(&b.1.rel_path))
-                .then_with(|| a.1.start_line.cmp(&b.1.start_line))
+                .then_with(|| file_of(a.1).cmp(file_of(b.1)))
+                .then_with(|| {
+                    index.chunks[a.1 as usize]
+                        .start_line
+                        .cmp(&index.chunks[b.1 as usize].start_line)
+                })
         });
 
         // 文件级聚合：同一文件多窗命中说明整份文件都相关（源码检索里文件名+全文
         // 才是"哪个文件该看"的答案）。文件得分 = 最佳窗 + 其余窗得分的 1/5（阻尼，
         // 避免长文件靠窗口数量取胜）；每个文件只出它得分最高的一段。
-        let mut best_per_file: HashMap<&str, (u64, u64, &Chunk)> = HashMap::new(); // rel_path -> (最佳分, 总分, 最佳窗)
-        for (score, chunk) in &scored {
-            let entry = best_per_file
-                .entry(chunk.rel_path.as_str())
-                .or_insert_with(|| (0, 0, chunk));
-            entry.1 += score;
+        let mut best_per_file: HashMap<u32, (u64, u64, u32)> = HashMap::new(); // file_id -> (最佳分, 总分, 最佳窗)
+        for (score, ci) in &scored {
+            let file_id = index.chunks[*ci as usize].file_id;
+            let entry = best_per_file.entry(file_id).or_insert_with(|| (0, 0, *ci));
+            entry.1 += *score;
             if *score > entry.0 {
                 entry.0 = *score;
-                entry.2 = chunk;
+                entry.2 = *ci;
             }
         }
-        let mut by_file: Vec<(u64, &Chunk)> = best_per_file
+        let mut by_file: Vec<(u64, u32)> = best_per_file
             .into_values()
-            .map(|(best, sum, chunk)| (best + (sum - best) / 5, chunk))
+            .map(|(best, sum, ci)| (best + (sum - best) / 5, ci))
             .collect();
         by_file.sort_by(|a, b| {
             b.0.cmp(&a.0)
-                .then_with(|| a.1.rel_path.cmp(&b.1.rel_path))
-                .then_with(|| a.1.start_line.cmp(&b.1.start_line))
+                .then_with(|| file_of(a.1).cmp(file_of(b.1)))
+                .then_with(|| {
+                    index.chunks[a.1 as usize]
+                        .start_line
+                        .cmp(&index.chunks[b.1 as usize].start_line)
+                })
         });
         by_file.truncate(limit);
 
         by_file
             .into_iter()
-            .map(|(_, chunk)| DocHit {
-                title: chunk.title.clone(),
-                locator: format!("{}:{}-{}", chunk.rel_path, chunk.start_line, chunk.end_line),
-                snippet: read_snippet(&self.root, chunk),
+            .map(|(_, ci)| {
+                let chunk = &index.chunks[ci as usize];
+                let rel_path = &index.files[chunk.file_id as usize];
+                DocHit {
+                    title: index.titles[chunk.title_id as usize].clone(),
+                    locator: format!("{}:{}-{}", rel_path, chunk.start_line, chunk.end_line),
+                    snippet: read_snippet(&self.root, rel_path, chunk.start_line, chunk.end_line),
+                }
             })
             .collect()
     }
@@ -237,14 +328,14 @@ impl DocumentSource for LocalDocSource {
 
 /// 查询时按需读文件取 snippet：从分块起始行起最多 [`SNIPPET_MAX_LINES`] 行。
 /// 文件缺失 / 不可读 / 行数变化都退化为空串，绝不 panic。
-fn read_snippet(root: &Path, chunk: &Chunk) -> String {
-    let Ok(content) = std::fs::read_to_string(root.join(&chunk.rel_path)) else {
+fn read_snippet(root: &Path, rel_path: &str, start_line: usize, end_line: usize) -> String {
+    let Ok(content) = std::fs::read_to_string(root.join(rel_path)) else {
         return String::new();
     };
-    let take = SNIPPET_MAX_LINES.min(chunk.end_line.saturating_sub(chunk.start_line) + 1);
+    let take = SNIPPET_MAX_LINES.min(end_line.saturating_sub(start_line) + 1);
     content
         .lines()
-        .skip(chunk.start_line.saturating_sub(1))
+        .skip(start_line.saturating_sub(1))
         .take(take)
         .collect::<Vec<_>>()
         .join("\n")
@@ -257,25 +348,31 @@ fn build_index(root: &Path, extensions: &[String], excludes: &[String]) -> Index
             root = %root.display(),
             "本地文档根目录不存在或不是目录，索引保持为空（目录可能后挂载；重启进程前不会重扫）"
         );
-        return Index { chunks: Vec::new(), df: HashMap::new() };
+        return Index::empty();
     }
-    let mut files = 0usize;
-    let mut chunks = Vec::new();
-    walk_dir(root, "", extensions, excludes, &mut chunks, &mut files);
+    let mut builder = IndexBuilder::new();
+    walk_dir(root, "", extensions, excludes, &mut builder);
     info!(
-        files,
-        chunks = chunks.len(),
+        files = builder.file_count,
+        chunks = builder.chunks.len(),
+        terms = builder.terms.len(),
         root = %root.display(),
         "本地文档索引构建完成"
     );
-    // 文档频率：含某词的分块数（IDF 打分用）。
-    let mut df: HashMap<String, u32> = HashMap::new();
-    for chunk in &chunks {
-        for term in chunk.tf.keys() {
-            *df.entry(term.clone()).or_insert(0) += 1;
+    // 文档频率：含某词的分块数（IDF 打分用）。chunk.tf 内每个词至多出现一次。
+    let mut df = vec![0u32; builder.terms.len()];
+    for chunk in &builder.chunks {
+        for (term_id, _) in &chunk.tf {
+            df[*term_id as usize] += 1;
         }
     }
-    Index { chunks, df }
+    Index {
+        chunks: builder.chunks,
+        files: builder.files,
+        titles: builder.titles,
+        terms: builder.terms,
+        df,
+    }
 }
 
 /// 递归遍历目录：跳过隐藏项（`.` 前缀）、`target`/`node_modules`/`.git`、
@@ -285,8 +382,7 @@ fn walk_dir(
     rel_prefix: &str,
     extensions: &[String],
     excludes: &[String],
-    chunks: &mut Vec<Chunk>,
-    files: &mut usize,
+    builder: &mut IndexBuilder,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         debug!(dir = %dir.display(), "读取目录失败，跳过");
@@ -307,9 +403,9 @@ fn walk_dir(
             if SKIPPED_DIRS.contains(&name.as_str()) {
                 continue;
             }
-            walk_dir(&entry.path(), &child_rel, extensions, excludes, chunks, files);
+            walk_dir(&entry.path(), &child_rel, extensions, excludes, builder);
         } else if file_type.is_file() {
-            index_file(&entry.path(), &child_rel, &name, extensions, excludes, chunks, files);
+            index_file(&entry.path(), &child_rel, &name, extensions, excludes, builder);
         }
         // 符号链接等其它类型：跳过（防环路，避免重复计数）
     }
@@ -330,8 +426,7 @@ fn index_file(
     file_name: &str,
     extensions: &[String],
     excludes: &[String],
-    chunks: &mut Vec<Chunk>,
-    files: &mut usize,
+    builder: &mut IndexBuilder,
 ) {
     let rel_lower = rel_path.to_lowercase();
     if excludes.iter().any(|ex| rel_lower.contains(ex)) {
@@ -357,7 +452,10 @@ fn index_file(
     if lines.is_empty() {
         return; // 空文件没有可检索内容
     }
-    *files += 1;
+    builder.file_count += 1;
+    // 路径只存一次：该文件所有窗口共享同一条 files 表记录（file_id）。
+    let file_id = builder.files.len() as u32;
+    builder.files.push(rel_path.to_string());
     let markdown_like = MARKDOWN_EXTS.iter().any(|ext| lower.ends_with(ext));
     if markdown_like {
         // markdown / 纯文本：按标题行分节，节包含其标题行；第一个标题之前为前言。
@@ -366,34 +464,30 @@ fn index_file(
                 Some(no) => lines[no - 1].trim_start_matches('#').trim().to_string(),
                 None => file_name.to_string(), // 前言：尚无标题行，退用文件名
             };
-            push_chunk(&lines[start - 1..end], rel_path, start, title, chunks);
+            push_chunk(builder, file_id, rel_path, start, end, &title, &lines[start - 1..end]);
         }
     } else {
         // 代码等其它文本：固定 60 行窗口，无重叠。
         for start in (1..=lines.len()).step_by(CODE_WINDOW_LINES) {
             let end = (start + CODE_WINDOW_LINES - 1).min(lines.len());
-            push_chunk(
-                &lines[start - 1..end],
-                rel_path,
-                start,
-                file_name.to_string(),
-                chunks,
-            );
+            push_chunk(builder, file_id, rel_path, start, end, file_name, &lines[start - 1..end]);
         }
     }
 }
 
-/// 把一段行（`lines` 的 1-based 起始行为 `start_line`）收进索引：算词频向量。
+/// 把一段行收进索引：算词频向量（词即时内联为 term_id），标题去重为 title_id。
 /// 路径分词（camelCase 拆分，如 NaturalSpawner → natural + spawner）以 [`PATH_TOKEN_WEIGHT`]
 /// 计入 tf——代码检索里文件名往往是最强信号；`package`/`import` 行不计入（纯噪声）。
 fn push_chunk(
-    lines: &[&str],
+    builder: &mut IndexBuilder,
+    file_id: u32,
     rel_path: &str,
     start_line: usize,
-    title: String,
-    chunks: &mut Vec<Chunk>,
+    end_line: usize,
+    title: &str,
+    lines: &[&str],
 ) {
-    let mut tf: HashMap<String, usize> = HashMap::new();
+    let mut tf: HashMap<u32, u32> = HashMap::new();
     let body = lines
         .iter()
         .copied()
@@ -404,16 +498,22 @@ fn push_chunk(
         .collect::<Vec<&str>>()
         .join("\n");
     for token in tokenize(&body) {
-        *tf.entry(token).or_insert(0) += 1;
+        let term_id = builder.intern_term(&token);
+        *tf.entry(term_id).or_insert(0) += 1;
     }
     for token in tokenize_path(rel_path) {
-        *tf.entry(token).or_insert(0) += PATH_TOKEN_WEIGHT;
+        let term_id = builder.intern_term(&token);
+        *tf.entry(term_id).or_insert(0) += PATH_TOKEN_WEIGHT as u32;
     }
-    chunks.push(Chunk {
-        rel_path: rel_path.to_string(),
+    // 摊平成按 term_id 升序的 (id, count) 数组——查询时二分，替代每块一个 HashMap<String,_>。
+    let mut tf: Vec<(u32, u32)> = tf.into_iter().collect();
+    tf.sort_unstable_by_key(|(term_id, _)| *term_id);
+    let title_id = builder.intern_title(title);
+    builder.chunks.push(Chunk {
+        file_id,
+        title_id,
         start_line,
-        end_line: start_line + lines.len() - 1,
-        title,
+        end_line,
         tf,
     });
 }

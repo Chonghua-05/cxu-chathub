@@ -7,10 +7,9 @@
 
 > 按优先级排列。已完成/历史项见下方各版本清单。
 
-- [ ] **v0.3 线上收尾**：代码侧已全部完成（检索评测、云端语料、智能路由，见下方
-      v0.3 清单）；剩线上步骤——`!mc` 反编译源码 / `!aimc` 释读文档等本地语料放置、
-      线上启用 `agent.skills` / `agent.llm`（改配置须 `docker restart`），LLM 就位后
-      跑 `rust/eval/mc-source.json` 与评测 `--llm` 模式核对，并在测试群灰度验证智能路由。
+- [x] **v0.3 线上收尾**：已完成——`!mc`（15 版源码 + MinecraftDocs 机制文档层）、
+      `!tmc` / `!docs` / `!wiki` 云端语料均已接入并线上启用（技能收敛 mc/tmc/docs/wiki，
+      `!mc` 走分段检索）；线上 `agent.skills` / `agent.llm` / `agent.routing` 已启用。
 - [ ] **v0.5 线上启用与验证**：代码侧已完成（见下方 v0.5 清单）——`config.json`
       开 `patch_broadcast.enabled` + 配 `agent.llm`（状态图/长图渲染已内置），
       测试群验证合并转发的实际显示效果（本机无 NapCat，wire 格式仅单测覆盖）。
@@ -50,9 +49,9 @@ LLM 整理（失败自动降级摘录）均已落地并通过端到端测试。
 
 - [x] **检索层与技能层**：`LocalDocSource`（文件/行级出处）、`MediaWikiSource`（条目 URL）、
       通用 `DocQuerySkill`（多源合并、触发边界、三端回复、LLM 整理与降级）
-- [ ] **语料接入**：云端语料已全部接入并评测（`!tmc` GTMC 文章库 / `!doc` RMS-Docs /
-      `!docs` MinecraftDocs（英文，含 `exclude` 路径排除）/ `!wiki`）；剩本地语料——
-      MC 源码副本（`!mc`）与源码释读文档（`!aimc`）放置到配置目录并线上启用
+- [x] **语料接入**：云端语料（`!tmc` techmc.wiki / `!docs` docs.cxu.org.cn / `!wiki`）+ 本地
+      语料（`!mc`：15 版 MC 源码 `data/docs/mc-source` + 机制文档层 MinecraftDocs）均已接入并线上启用；
+      技能收敛为 mc/tmc/docs/wiki，`!mc` 走**分段检索**（先 MinecraftDocs 定位、再翻源码）
 - [x] **检索质量评测**：固定抽样问题集核对带出处的准确率——`rust/eval/` 四份问题集 +
       `examples/eval_retrieval` 运行器（通过率/MRR，`--min-rate` 门禁），云端语料实测
       gtmc 11/11、rms-docs 7/7、mc-wiki 8/8（2026-09-28）；顺带修正路径 CJK 分词与

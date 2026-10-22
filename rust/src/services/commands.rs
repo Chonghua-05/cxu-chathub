@@ -1,4 +1,4 @@
-//! QQ 群命令：/chatroom、/server（/status 为兼容别名）。
+//! QQ 群命令：/chatroom、/server。
 //!
 //! 命令都不需要 AI，纯 HTTP 查询 + 格式化后回群。
 //! 行为约定：
@@ -175,7 +175,7 @@ pub fn format_status(data: &Value) -> String {
     lines.join("\n").trim().to_string()
 }
 
-/// 命令分发：/chatroom、/server（/status 为兼容别名）。
+/// 命令分发：/chatroom、/server。
 pub struct CommandService {
     client: reqwest::Client,
     allow_all: bool,
@@ -224,7 +224,7 @@ impl CommandService {
         self.allow_all || self.allow_from.contains(&user_id)
     }
 
-    /// 命令计数表（仅已受理的命令会计入；/status 归到 "server"）。
+    /// 命令计数表（仅已受理的命令会计入）。
     pub fn stats(&self) -> HashMap<String, u64> {
         self.lock_stats().clone()
     }
@@ -237,20 +237,17 @@ impl CommandService {
 
     /// 返回命令响应；None 表示不响应。
     ///
-    /// None：非命令 / 名字不在 (chatroom, server, status) / 未授权——**静默**。
-    /// /status 归一化为 "server"（stats 计在 "server" 下）。
+    /// None：非命令 / 名字不在 (chatroom, server) / 未授权——**静默**。
     /// /chatroom → GET voice_api → format_voice_channels；/server → GET status_api；
     /// status_image=true 时先尝试渲染 PNG（失败自动回退文本）。
     pub async fn handle(&self, text: &str, user_id: i64) -> Option<CommandResult> {
         let (name, _args) = parse_command(text)?;
-        if !matches!(name.as_str(), "chatroom" | "server" | "status") {
+        if !matches!(name.as_str(), "chatroom" | "server") {
             return None;
         }
         if !self.allowed(user_id) {
             return None;
         }
-        // 兼容别名：/status 与 /server 同义，统计也归到 server
-        let name: &str = if name == "status" { "server" } else { name.as_str() };
         *self.lock_stats().entry(name.to_string()).or_insert(0) += 1;
 
         if name == "chatroom" {
@@ -544,21 +541,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_alias_counts_under_server() {
-        let (base, _mock) = spawn_mock(status_data()).await;
+    async fn status_is_not_a_command() {
+        let (base, mock) = spawn_mock(status_data()).await;
         let service = make_service(&base, true, Vec::new(), false);
 
-        // /status 是 /server 的兼容别名，返回同样的文本卡片
-        let result = service.handle("/status", 1).await.unwrap();
+        // /status 不再响应：不上报、不打接口、不计数，也不影响 /server
+        assert!(service.handle("/status", 1).await.is_none());
+        assert!(service.stats().is_empty());
+        assert!(mock.requests.lock().unwrap().is_empty());
+
+        let result = service.handle("/server", 1).await.unwrap();
         assert!(result.image.is_none());
         assert!(result.text.contains("服务端A"), "{}", result.text);
-
-        service.handle("/chatroom", 1).await.unwrap();
-        service.handle("/status", 1).await.unwrap();
-
-        let stats = service.stats();
-        assert_eq!(stats.get("server"), Some(&2));
-        assert_eq!(stats.get("chatroom"), Some(&1));
+        assert_eq!(service.stats().get("server"), Some(&1));
     }
 
     #[tokio::test]

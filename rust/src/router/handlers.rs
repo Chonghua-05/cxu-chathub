@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use crate::router::{match_prefix, CommandHandler, CommandInfo, DispatchCtx, InboundMessage, Source};
 use crate::services::commands::{parse_command, CommandService};
 
-/// `/chatroom` `/server`（`/status` 为兼容别名）：解析、鉴权与应答委托给 [`CommandService`]。
+/// `/chatroom` `/server`：解析、鉴权与应答委托给 [`CommandService`]。
 ///
 /// 消费语义：非命令、未授权（静默）或空结果返回 `false`，
 /// 消息继续进入转发流水线；命中并应答后返回 `true`。
@@ -22,7 +22,7 @@ impl CommandHandler for SlashCommandAdapter {
     fn info(&self) -> CommandInfo {
         CommandInfo {
             name: "chatroom".into(),
-            aliases: vec!["server".into(), "status".into()],
+            aliases: vec!["server".into()],
             trigger: "/<name>".into(),
             description: "查询语音频道在线名单与服务器状态（/server 支持状态图，QQ 群）".into(),
         }
@@ -34,7 +34,7 @@ impl CommandHandler for SlashCommandAdapter {
         }
         matches!(
             parse_command(&msg.text),
-            Some((name, _)) if matches!(name.as_str(), "chatroom" | "server" | "status")
+            Some((name, _)) if matches!(name.as_str(), "chatroom" | "server")
         )
     }
 

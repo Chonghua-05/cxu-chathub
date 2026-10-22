@@ -20,7 +20,7 @@
 | chatroom → QQ 群 | 频道内 `!q xxx` 转发到 QQ 群；游戏内 `!q xxx` 同样转发 |
 | chatroom ↔ 游戏 | ChatBridge（AES-CBC over TCP，端口 21027）双向同步 |
 | MC 玩家上下线 | 轮询状态 API（可配置），带防抖地把上下线事件推送到 chatroom |
-| QQ 命令 | `/chatroom`（语音频道在线）、`/server`（状态图，渲染失败自动回退文本；`/status` 为兼容别名） |
+| QQ 命令 | `/chatroom`（语音频道在线）、`/server`（状态图，渲染失败自动回退文本） |
 
 设计要点：
 

@@ -84,7 +84,7 @@ MC 服务端插件 ──ChatBridge 系统广播──▶ on_game_chat（author 
 ```
 
 - 图片走 `base64://`，容器与宿主机不需要共享文件系统。
-- `/status` 是 `/server` 的兼容别名。
+- `/status` 不再作为命令响应，只有 `/server` 会回复。
 
 ## 状态文件（`state.rs`）
 

@@ -19,7 +19,7 @@
 //! 统一给官方补丁说明总览页 [`PATCH_NOTES_PAGE`]。
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -553,17 +553,18 @@ impl Subsystem for PatchBroadcastSubsystem {
             return Ok(());
         }
         let broadcaster = self.broadcaster.clone();
-        let interval = Duration::from_secs(self.broadcaster.cfg.poll_interval_secs.max(60));
+        let default_interval = Duration::from_secs(self.broadcaster.cfg.poll_interval_secs.max(60));
         let task = tokio::spawn(async move {
             loop {
                 broadcaster.poll_once().await;
+                let interval = current_poll_interval(default_interval);
                 tokio::time::sleep(interval).await;
             }
         });
         *self.task.lock().unwrap() = Some(task);
         info!(
-            interval_secs = interval.as_secs(),
-            "版本更新播报已启用（下限 60s，防打爆官方 feed）"
+            default_interval_secs = default_interval.as_secs(),
+            "版本更新播报已启用（北京时间周二 21~24 点自动切为 3 分钟高频轮询，其余时间段 30 分钟）"
         );
         Ok(())
     }
@@ -583,14 +584,46 @@ impl Subsystem for PatchBroadcastSubsystem {
                 detail: "未启用".into(),
             };
         }
+        let current_secs = current_poll_interval(Duration::from_secs(
+            self.broadcaster.cfg.poll_interval_secs.max(60),
+        ))
+        .as_secs();
         crate::subsystem::SubsystemHealth {
             name: self.name(),
             healthy: true,
             detail: format!(
-                "已启用（每 {}s 轮询官方 feed）",
-                self.broadcaster.cfg.poll_interval_secs
+                "已启用（当前每 {}s 轮询官方 feed；周二 21~24 点自动切 3 分钟）",
+                current_secs
             ),
         }
+    }
+}
+
+/// 计算下一次轮询的间隔时长：
+/// - 北京时间（UTC+8）每周二 21:00 ~ 24:00（快照通常发布的窗口期）：3 分钟（180s）；
+/// - 其余时间段：使用配置的默认间隔（默认 1800s / 30 分钟）。
+fn current_poll_interval(default_interval: Duration) -> Duration {
+    current_poll_interval_at(SystemTime::now(), default_interval)
+}
+
+fn current_poll_interval_at(now: SystemTime, default_interval: Duration) -> Duration {
+    const PEAK_INTERVAL: Duration = Duration::from_secs(180); // 3 分钟
+    const UTC8_OFFSET_SECS: u64 = 8 * 3600;
+
+    let now_secs = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let beijing_secs = now_secs + UTC8_OFFSET_SECS;
+    let days = beijing_secs / 86400;
+    let weekday = (days + 3) % 7; // 0 = Mon, 1 = Tue, ..., 6 = Sun
+    let hour = (beijing_secs % 86400) / 3600;
+
+    if weekday == 1 && (21..24).contains(&hour) {
+        PEAK_INTERVAL
+    } else {
+        default_interval
     }
 }
 
@@ -1000,5 +1033,34 @@ mod tests {
         bc.poll_once().await;
         let texts = sink.texts().join("\n");
         assert!(texts.contains("b2 的更新说明"), "实际: {texts}");
+    }
+
+    /// 轮询间隔：周二 21~24 点自动切 3 分钟（180s），其余时间段保持默认（如 1800s）。
+    #[test]
+    fn poll_interval_switches_dynamically() {
+        use std::time::UNIX_EPOCH;
+
+        let default_interval = Duration::from_secs(1800);
+        let peak_interval = Duration::from_secs(180);
+
+        // 2026-10-27 12:59:59 UTC -> 北京时间 2026-10-27 20:59:59（周二，高峰前 1 秒）
+        let t_before = UNIX_EPOCH + Duration::from_secs(1793105999);
+        assert_eq!(current_poll_interval_at(t_before, default_interval), default_interval);
+
+        // 2026-10-27 13:00:00 UTC -> 北京时间 2026-10-27 21:00:00（周二，高峰开始）
+        let t_start = UNIX_EPOCH + Duration::from_secs(1793106000);
+        assert_eq!(current_poll_interval_at(t_start, default_interval), peak_interval);
+
+        // 2026-10-27 15:59:59 UTC -> 北京时间 2026-10-27 23:59:59（周二，高峰最后 1 秒）
+        let t_end = UNIX_EPOCH + Duration::from_secs(1793116799);
+        assert_eq!(current_poll_interval_at(t_end, default_interval), peak_interval);
+
+        // 2026-10-27 16:00:00 UTC -> 北京时间 2026-10-28 00:00:00（周三，高峰结束）
+        let t_after = UNIX_EPOCH + Duration::from_secs(1793116800);
+        assert_eq!(current_poll_interval_at(t_after, default_interval), default_interval);
+
+        // 2026-10-26 13:30:00 UTC -> 北京时间 2026-10-26 21:30:00（周一同一时间段，非周二）
+        let t_monday = UNIX_EPOCH + Duration::from_secs(1793019000);
+        assert_eq!(current_poll_interval_at(t_monday, default_interval), default_interval);
     }
 }

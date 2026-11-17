@@ -26,7 +26,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::{error, info, warn};
 
-use crate::agent::llm::LlmClient;
+use crate::agent::llm::{LlmClient, LlmError};
 use crate::config::PatchBroadcastConfig;
 use crate::services::status_render::Block;
 use crate::state::StateStore;
@@ -40,6 +40,15 @@ const NODE_NICKNAME: &str = "Mojang 更新播报";
 
 /// 正文翻译提示词：保留 HTML 结构，只翻文本，MC 术语用官方中文译名。
 const TRANSLATE_PROMPT: &str = "你是 Minecraft 更新公告的翻译器。把用户给出的 HTML 更新说明翻译成简体中文：保留所有 HTML 标签与结构原样，只翻译文本内容；Minecraft 领域内容遵循官方中文译名；不要添加任何解释，不要增删内容。";
+
+/// 翻译尝试次数上限：免费池偶发 429/5xx，只补一次重试，避免把播报拖太久。
+const TRANSLATE_ATTEMPTS: usize = 2;
+
+/// 重试前等待：覆盖上游瞬时限流的冷却窗口；测试里压到 1ms 免得拖慢用例。
+#[cfg(not(test))]
+const TRANSLATE_RETRY_DELAY: Duration = Duration::from_secs(10);
+#[cfg(test)]
+const TRANSLATE_RETRY_DELAY: Duration = Duration::from_millis(1);
 
 /// 纯文本降级时摘录的长度上限（UTF-8 安全截断）。
 const TEXT_FALLBACK_MAX_CHARS: usize = 1500;
@@ -308,6 +317,7 @@ impl PatchBroadcaster {
     }
 
     /// 翻译：LLM 未配置或正文缺失 → None；翻译失败 → None（发原文）。
+    /// 瞬时故障（429/5xx/超时）补一次重试；配置类错误重试也没用，直接降级。
     async fn translate(&self, body_html: Option<&str>) -> Option<String> {
         let Some(body) = body_html else {
             return None;
@@ -316,17 +326,30 @@ impl PatchBroadcaster {
             warn!("未配置 agent.llm，版本更新播报跳过翻译（只发原文）");
             return None;
         };
-        match llm.complete(TRANSLATE_PROMPT, body).await {
-            Ok(translated) if !translated.trim().is_empty() => Some(translated),
-            Ok(_) => {
-                warn!("翻译返回空结果，版本更新播报只发原文");
-                None
-            }
-            Err(err) => {
-                warn!(error = %err, "翻译失败，版本更新播报只发原文");
-                None
+        for attempt in 1..=TRANSLATE_ATTEMPTS {
+            match llm.complete(TRANSLATE_PROMPT, body).await {
+                Ok(translated) if !translated.trim().is_empty() => return Some(translated),
+                Ok(_) => {
+                    warn!("翻译返回空结果，版本更新播报只发原文");
+                    return None;
+                }
+                Err(err) => {
+                    if attempt < TRANSLATE_ATTEMPTS && is_transient(&err) {
+                        warn!(
+                            attempt,
+                            retry_in_secs = TRANSLATE_RETRY_DELAY.as_secs(),
+                            error = %err,
+                            "翻译失败（瞬时故障），重试一次"
+                        );
+                        tokio::time::sleep(TRANSLATE_RETRY_DELAY).await;
+                        continue;
+                    }
+                    warn!(attempt, error = %err, "翻译失败，版本更新播报只发原文");
+                    return None;
+                }
             }
         }
+        None
     }
 
     /// HTML → 图（有渲染器）或纯文本摘录（无渲染器 / 渲染失败）；正文缺失 → Skip。
@@ -404,6 +427,18 @@ struct FeedList {
 struct EntryBody {
     #[serde(default)]
     body: String,
+}
+
+/// 是否值得重试：429 限流、5xx、超时/连接失败是瞬时故障；401/403/404
+/// 之类的配置错误和响应结构异常重试也没用。
+fn is_transient(err: &LlmError) -> bool {
+    match err {
+        LlmError::Http(http) => match http.status() {
+            Some(status) => status.as_u16() == 429 || status.is_server_error(),
+            None => http.is_timeout() || http.is_connect(),
+        },
+        LlmError::BadResponse(_) => false,
+    }
 }
 
 /// HTML 粗剥离成文本块（不写完整解析器、不引解析库）：
@@ -632,6 +667,7 @@ mod tests {
     use super::*;
 
     use std::sync::Mutex as StdMutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use axum::extract::State;
     use axum::http::StatusCode;
@@ -786,6 +822,45 @@ mod tests {
         format!("http://{addr}/v1/chat/completions")
     }
 
+    /// 前 `failures` 次返回 `fail_status`、之后返回正常译文的假 LLM（记录命中次数）。
+    async fn spawn_flaky_llm(
+        translated: &'static str,
+        failures: usize,
+        fail_status: StatusCode,
+    ) -> (String, Arc<AtomicUsize>) {
+        use axum::Json;
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move |Json(_): Json<Value>| {
+                let counter = counter.clone();
+                async move {
+                    let hit = counter.fetch_add(1, Ordering::SeqCst);
+                    if hit < failures {
+                        (
+                            fail_status,
+                            Json(json!({ "error": { "message": "mock failure" } })),
+                        )
+                    } else {
+                        (
+                            StatusCode::OK,
+                            Json(json!({
+                                "choices": [ { "message": { "role": "assistant", "content": translated } } ]
+                            })),
+                        )
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}/v1/chat/completions"), hits)
+    }
+
     fn broadcaster(
         cfg: PatchBroadcastConfig,
         state: Arc<StateStore>,
@@ -900,6 +975,90 @@ mod tests {
         assert_eq!(pages.len(), 2);
         assert!(pages[0].contains("中文翻译内容"));
         assert!(pages[1].contains("new 的更新说明"));
+    }
+
+    /// 上游偶发 429（免费池限流）：补一次重试就能拿到译文，不降级发原文。
+    #[tokio::test]
+    async fn broadcast_translate_retries_once_on_429() {
+        let (feed_url, feed) = spawn_feed().await;
+        let (url, hits) =
+            spawn_flaky_llm("<p>重试后的译文</p>", 1, StatusCode::TOO_MANY_REQUESTS).await;
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(StateStore::new(dir.path().join("state.json")));
+        let sink = Arc::new(FakeSink::default());
+        let renderer = FakeRenderer::new();
+        let bc = broadcaster(
+            config(feed_url),
+            state.clone(),
+            Some(llm(url)),
+            Some(renderer.clone()),
+            sink.clone(),
+        );
+
+        // 基线
+        *feed.list.lock().unwrap() = json!({ "entries": [entry_json("old")] }).to_string();
+        feed.bodies
+            .lock()
+            .unwrap()
+            .insert("old".into(), body_json("old"));
+        bc.poll_once().await;
+
+        // 新版本：第一次 429 → 重试成功
+        *feed.list.lock().unwrap() = json!({ "entries": [entry_json("new")] }).to_string();
+        feed.bodies
+            .lock()
+            .unwrap()
+            .insert("new".into(), body_json("new"));
+        bc.poll_once().await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "429 后应重试一次");
+        let pages = renderer.pages.lock().unwrap();
+        assert!(
+            pages[0].contains("重试后的译文"),
+            "译后页应是译文，实际: {}",
+            pages[0]
+        );
+    }
+
+    /// 4xx（非 429）是配置/权限问题，重试无意义：只调一次，直接降级原文。
+    #[tokio::test]
+    async fn broadcast_translate_does_not_retry_on_client_error() {
+        let (feed_url, feed) = spawn_feed().await;
+        let (url, hits) =
+            spawn_flaky_llm("<p>不该出现</p>", usize::MAX, StatusCode::BAD_REQUEST).await;
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(StateStore::new(dir.path().join("state.json")));
+        let sink = Arc::new(FakeSink::default());
+        let renderer = FakeRenderer::new();
+        let bc = broadcaster(
+            config(feed_url),
+            state.clone(),
+            Some(llm(url)),
+            Some(renderer.clone()),
+            sink.clone(),
+        );
+
+        *feed.list.lock().unwrap() = json!({ "entries": [entry_json("old")] }).to_string();
+        feed.bodies
+            .lock()
+            .unwrap()
+            .insert("old".into(), body_json("old"));
+        bc.poll_once().await;
+
+        *feed.list.lock().unwrap() = json!({ "entries": [entry_json("new")] }).to_string();
+        feed.bodies
+            .lock()
+            .unwrap()
+            .insert("new".into(), body_json("new"));
+        bc.poll_once().await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "4xx 不应重试");
+        let pages = renderer.pages.lock().unwrap();
+        assert!(
+            pages[0].contains("new 的更新说明"),
+            "应降级为原文页，实际: {}",
+            pages[0]
+        );
     }
 
     /// 播报顺序：两个新版本按从旧到新发。
